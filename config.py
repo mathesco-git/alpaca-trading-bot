@@ -13,6 +13,13 @@ ALPACA_API_KEY = os.getenv("ALPACA_API_KEY")
 ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
 ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
 
+# --- Alpaca Data Feed ---
+# "sip" = consolidated feed from ALL US exchanges (most accurate, requires paid subscription)
+# "iex" = IEX exchange only (~2-3% of market, free but can have wildly different prices)
+# Set via env var or default to "sip". If you're on the free plan, Alpaca will auto-downgrade
+# to IEX for real-time data but allow SIP for historical queries with a 15-min delay.
+ALPACA_DATA_FEED = os.getenv("ALPACA_DATA_FEED", "sip")
+
 # --- Bot Behavior ---
 ENABLE_TRADING = True          # False = monitor-only mode (no orders placed)
 LOG_LEVEL = "INFO"             # DEBUG, INFO, WARNING, ERROR
@@ -29,7 +36,7 @@ DAY_RSI_ENTRY_THRESHOLD = 50   # Minimum intraday RSI to enter (was 60 — rejec
 DAY_RSI_ENTRY_CEILING = 80     # Maximum intraday RSI (was 75 — missed strong momentum)
 DAY_VOLUME_MULTIPLIER = 1.2    # Volume must be > 1.2x 20-period avg (was 1.5 — rejected 49% of days)
 DAY_VOLUME_SPIKE_CAP = 6.0     # Reject if volume > 6x avg (was 5.0)
-DAY_SCAN_INTERVAL_MINUTES = 5
+DAY_SCAN_INTERVAL_MINUTES = 15  # 15-min interval (matches SIP free-tier delay)
 DAY_USE_DAILY_ATR = True        # Use daily ATR for stop/profit (not intraday 5min ATR)
 DAY_MIN_INTRADAY_ATR = 0.05    # Minimum intraday ATR to trade (skip illiquid/dead stocks)
 DAY_MAX_PRICE_DEVIATION_PCT = 0.10  # Skip if price is >10% away from last daily close

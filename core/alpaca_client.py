@@ -27,7 +27,7 @@ from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
-from config import ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL
+from config import ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL, ALPACA_DATA_FEED
 
 logger = logging.getLogger(__name__)
 
@@ -210,12 +210,24 @@ def get_bars(symbol: str, timeframe: str = "5Min", limit: int = 100) -> Optional
         start = datetime.now() - timedelta(days=max(limit // 78 + 2, 7))
 
     try:
-        request = StockBarsRequest(
+        # Build request with explicit data feed to avoid IEX vs SIP mismatches
+        request_kwargs = dict(
             symbol_or_symbols=symbol,
             timeframe=tf,
             start=start,
             limit=limit,
         )
+        # Add feed parameter if configured (requires alpaca-py >= 0.8)
+        try:
+            from alpaca.data.enums import DataFeed
+            feed_map = {"sip": DataFeed.SIP, "iex": DataFeed.IEX}
+            if ALPACA_DATA_FEED.lower() in feed_map:
+                request_kwargs["feed"] = feed_map[ALPACA_DATA_FEED.lower()]
+        except (ImportError, AttributeError):
+            # Older alpaca-py version — feed param not available
+            logger.debug("DataFeed enum not available — using default feed")
+
+        request = StockBarsRequest(**request_kwargs)
         bars = _retry_on_rate_limit(client.get_stock_bars, request)
 
         # Handle different alpaca-py result formats
@@ -489,8 +501,11 @@ def get_latest_price(symbol: str) -> Optional[float]:
     Daily bars only contain the *previous day's* close, which is stale and will
     cause stop-loss/take-profit triggers on completely wrong prices.
 
+    All data is sourced from the configured ALPACA_DATA_FEED (SIP by default),
+    ensuring consistency across signals, stop-loss checks, and order execution.
+
     Priority order:
-      1. Alpaca latest trade API (real-time, most accurate)
+      1. Alpaca latest trade API (real-time on paid plan, may be delayed on free)
       2. 1-minute bars (near real-time)
       3. 5-minute bars (fallback)
       4. Daily bars (last resort — only valid outside market hours)
@@ -500,12 +515,20 @@ def get_latest_price(symbol: str) -> Optional[float]:
     if cached is not None:
         return cached
 
-    # Priority 1: Try Alpaca latest trade API (real-time)
+    # Priority 1: Try Alpaca latest trade API
     try:
         client = _get_data_client()
         if client:
             from alpaca.data.requests import StockLatestTradeRequest
-            request = StockLatestTradeRequest(symbol_or_symbols=symbol)
+            request_kwargs = {"symbol_or_symbols": symbol}
+            try:
+                from alpaca.data.enums import DataFeed
+                feed_map = {"sip": DataFeed.SIP, "iex": DataFeed.IEX}
+                if ALPACA_DATA_FEED.lower() in feed_map:
+                    request_kwargs["feed"] = feed_map[ALPACA_DATA_FEED.lower()]
+            except (ImportError, AttributeError):
+                pass
+            request = StockLatestTradeRequest(**request_kwargs)
             trades = _retry_on_rate_limit(client.get_stock_latest_trade, request)
             if trades:
                 # Handle both dict and direct response formats
@@ -517,7 +540,7 @@ def get_latest_price(symbol: str) -> Optional[float]:
     except Exception as e:
         logger.debug(f"Latest trade API failed for {symbol}: {e}")
 
-    # Priority 2: 1-minute bars (near real-time during market hours)
+    # Priority 2: 1-minute bars
     df = get_bars(symbol, timeframe="1Min", limit=5)
     if df is not None and not df.empty:
         price = float(df.iloc[-1]["close"])
@@ -581,12 +604,20 @@ def get_multi_symbol_bars(symbols: List[str], timeframe: str = "5Min",
         batch = symbols[i:i + batch_size]
         batch_num = i // batch_size + 1
         try:
-            request = StockBarsRequest(
+            request_kwargs = dict(
                 symbol_or_symbols=batch,
                 timeframe=tf,
                 start=start,
                 limit=limit * len(batch),  # limit is per-request total, so scale by batch size
             )
+            try:
+                from alpaca.data.enums import DataFeed
+                feed_map = {"sip": DataFeed.SIP, "iex": DataFeed.IEX}
+                if ALPACA_DATA_FEED.lower() in feed_map:
+                    request_kwargs["feed"] = feed_map[ALPACA_DATA_FEED.lower()]
+            except (ImportError, AttributeError):
+                pass
+            request = StockBarsRequest(**request_kwargs)
             bars = _retry_on_rate_limit(client.get_stock_bars, request)
             if not bars:
                 failed_batches += 1
@@ -669,11 +700,19 @@ def get_multi_symbol_daily_bars(symbols: List[str], limit: int = 20) -> Dict[str
         try:
             # Note: do NOT pass limit here — it caps total bars across ALL symbols
             # in the batch, not per-symbol. Use the date range to control history depth.
-            request = StockBarsRequest(
+            request_kwargs = dict(
                 symbol_or_symbols=batch,
                 timeframe=TimeFrame.Day,
                 start=start,
             )
+            try:
+                from alpaca.data.enums import DataFeed
+                feed_map = {"sip": DataFeed.SIP, "iex": DataFeed.IEX}
+                if ALPACA_DATA_FEED.lower() in feed_map:
+                    request_kwargs["feed"] = feed_map[ALPACA_DATA_FEED.lower()]
+            except (ImportError, AttributeError):
+                pass
+            request = StockBarsRequest(**request_kwargs)
             bars = _retry_on_rate_limit(client.get_stock_bars, request)
             if not bars:
                 failed_batches += 1

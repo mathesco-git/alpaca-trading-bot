@@ -490,7 +490,7 @@ def _get_test_client():
         # Start scheduler if not running
         if not scheduler.running:
             from apscheduler.events import EVENT_JOB_ERROR
-            from config import HEALTH_CHECK_INTERVAL_SECONDS
+            from config import HEALTH_CHECK_INTERVAL_SECONDS, DAY_SCAN_INTERVAL_MINUTES
             from core.scheduler import (
                 pre_market_setup, day_trade_scan, swing_trade_scan,
                 stop_loss_monitor, eod_liquidation, post_market_report, health_check,
@@ -501,7 +501,7 @@ def _get_test_client():
 
             scheduler.add_listener(_job_error_listener, EVENT_JOB_ERROR)
             scheduler.add_job(pre_market_setup, 'cron', hour=9, minute=0, day_of_week='mon-fri', id='pre_market_setup', replace_existing=True, misfire_grace_time=300)
-            scheduler.add_job(day_trade_scan, 'cron', minute='*/5', hour='9-15', day_of_week='mon-fri', id='day_trade_scan', replace_existing=True, misfire_grace_time=120)
+            scheduler.add_job(day_trade_scan, 'cron', minute=f'*/{DAY_SCAN_INTERVAL_MINUTES}', hour='9-15', day_of_week='mon-fri', id='day_trade_scan', replace_existing=True, misfire_grace_time=120)
             scheduler.add_job(swing_trade_scan, 'cron', hour='9,13', minute=35, day_of_week='mon-fri', id='swing_trade_scan', replace_existing=True, misfire_grace_time=300)
             scheduler.add_job(stop_loss_monitor, 'cron', minute='*', hour='9-15', day_of_week='mon-fri', id='stop_loss_monitor', replace_existing=True, misfire_grace_time=30)
             scheduler.add_job(eod_liquidation, 'cron', hour=15, minute=50, day_of_week='mon-fri', id='eod_liquidation', replace_existing=True, misfire_grace_time=60)

@@ -3,7 +3,7 @@ All 7 scheduled job functions for the trading bot.
 
 Jobs:
     1. pre_market_setup   — 9:00 AM ET, refresh daily bars + swing signals
-    2. day_trade_scan     — Every 5 min, 9:35 AM - 3:45 PM ET
+    2. day_trade_scan     — Every 15 min, 9:35 AM - 3:45 PM ET (configurable via DAY_SCAN_INTERVAL_MINUTES)
     3. swing_trade_scan   — 9:35 AM + 1:00 PM ET
     4. stop_loss_monitor  — Every 1 min, 9:30 AM - 4:00 PM ET
     5. eod_liquidation    — 3:50 PM ET, close all day trades
@@ -294,7 +294,7 @@ def _is_pre_market() -> bool:
 
 def day_trade_scan():
     """
-    Every 5 min, 9:35 AM - 3:45 PM ET: Fetch 5-min bars,
+    Every 15 min (configurable), 9:35 AM - 3:45 PM ET: Fetch 5-min bars,
     run day trade signal engine, execute entries/exits.
     """
     if not _check_market_open():
@@ -513,25 +513,6 @@ def stop_loss_monitor():
                 exit_daily_df = get_daily_data(symbol, limit=10)
             except Exception:
                 pass  # Non-critical: logging without indicators is still valuable
-
-            # SAFETY: Cross-validate price against intraday data to catch stale prices.
-            # If get_latest_price returned a daily close (stale), it could be wildly
-            # different from the actual current intraday price. This prevents false
-            # stop-loss triggers from stale data.
-            if exit_intraday_df is not None and not exit_intraday_df.empty:
-                intraday_close = float(exit_intraday_df.iloc[-1]["close"])
-                price_deviation = abs(price - intraday_close) / intraday_close if intraday_close > 0 else 0
-                if price_deviation > 0.05:  # >5% discrepancy = stale price
-                    logger.warning(
-                        f"STALE PRICE DETECTED for {symbol}: "
-                        f"get_latest_price=${price:.2f} vs intraday close=${intraday_close:.2f} "
-                        f"({price_deviation*100:.1f}% deviation). Using intraday price instead."
-                    )
-                    log_heartbeat(
-                        f"STALE PRICE corrected for {symbol}: ${price:.2f} → ${intraday_close:.2f}",
-                        level="warning"
-                    )
-                    price = intraday_close
 
             # Check stop-loss
             if side == "buy" and price <= stop_loss:

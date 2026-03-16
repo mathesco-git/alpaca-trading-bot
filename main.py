@@ -17,7 +17,7 @@ import uvicorn
 
 from config import (
     DASHBOARD_HOST, DASHBOARD_PORT, HEALTH_CHECK_INTERVAL_SECONDS,
-    NGROK_ENABLED, NGROK_AUTHTOKEN,
+    NGROK_ENABLED, NGROK_AUTHTOKEN, DAY_SCAN_INTERVAL_MINUTES,
 )
 from core.scheduler import (
     pre_market_setup, day_trade_scan, swing_trade_scan,
@@ -69,7 +69,7 @@ async def startup():
     )
     scheduler.add_job(
         day_trade_scan, 'cron',
-        minute='*/5', hour='9-15', day_of_week='mon-fri',
+        minute=f'*/{DAY_SCAN_INTERVAL_MINUTES}', hour='9-15', day_of_week='mon-fri',
         id='day_trade_scan', replace_existing=True,
         misfire_grace_time=120
     )
