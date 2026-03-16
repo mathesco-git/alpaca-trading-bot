@@ -1,0 +1,1388 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Bot Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        dark: { 800: '#1e1e2e', 900: '#11111b', 700: '#313244', 600: '#45475a' },
+                        profit: '#a6e3a1',
+                        loss: '#f38ba8',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background: #11111b; color: #cdd6f4; font-family: 'Segoe UI', system-ui, sans-serif; }
+        .card { background: #1e1e2e; border: 1px solid #313244; border-radius: 12px; }
+        .badge-day { background: #89b4fa; color: #11111b; }
+        .badge-swing { background: #fab387; color: #11111b; }
+        .profit-row { background: rgba(166,227,161,0.05); }
+        .loss-row { background: rgba(243,139,168,0.05); }
+        .log-info { border-left: 3px solid #6c7086; }
+        .log-warning { border-left: 3px solid #f9e2af; }
+        .log-error { border-left: 3px solid #f38ba8; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1e1e2e; }
+        ::-webkit-scrollbar-thumb { background: #45475a; border-radius: 3px; }
+        .btn-danger { background: #f38ba8; color: #11111b; }
+        .btn-danger:hover { background: #eba0ac; }
+        .btn-warning { background: #f9e2af; color: #11111b; }
+        .btn-warning:hover { background: #f5c2e7; }
+        .btn-success { background: #a6e3a1; color: #11111b; }
+        .btn-success:hover { background: #94e2d5; }
+        .tab-active { border-bottom: 2px solid #89b4fa; color: #89b4fa; }
+
+        /* Mobile bottom navigation */
+        .mobile-nav { display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 60; background: #1e1e2e; border-top: 1px solid #313244; padding: 4px 0 env(safe-area-inset-bottom, 4px) 0; }
+        .mobile-nav-inner { display: flex; justify-content: space-around; align-items: center; max-width: 100%; overflow-x: auto; }
+        .mobile-nav-btn { display: flex; flex-direction: column; align-items: center; padding: 6px 4px; color: #6c7086; font-size: 10px; border: none; background: none; cursor: pointer; min-width: 56px; -webkit-tap-highlight-color: transparent; }
+        .mobile-nav-btn.active { color: #89b4fa; }
+        .mobile-nav-btn svg { width: 20px; height: 20px; margin-bottom: 2px; }
+
+        /* Mobile card view for tables */
+        .mobile-card { display: none; }
+        .mobile-card-item { background: #1e1e2e; border: 1px solid #313244; border-radius: 10px; padding: 12px; margin-bottom: 8px; }
+        .mobile-card-row { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; }
+        .mobile-card-row .label { color: #6c7086; font-size: 11px; }
+        .mobile-card-row .value { font-size: 13px; }
+
+        @media (max-width: 767px) {
+            .mobile-nav { display: block; }
+            main { padding-bottom: 72px !important; }
+            .desktop-table { display: none !important; }
+            .mobile-card { display: block !important; }
+            /* Larger touch targets */
+            button, select { min-height: 36px; }
+            .tab-btn, .hist-btn, .analytics-btn { min-height: 32px; min-width: 40px; padding: 6px 10px !important; font-size: 13px !important; }
+        }
+    </style>
+</head>
+<body class="min-h-screen">
+
+<!-- Top Bar -->
+<header class="card sticky top-0 z-50 px-3 py-2 md:px-4 md:py-3 mb-4 rounded-none border-x-0 border-t-0">
+    <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2 md:gap-4">
+            <span id="status-indicator" class="hidden md:inline text-2xl">&#x1F7E2;</span>
+            <span id="heartbeat-pulse" class="relative flex h-3 w-3">
+                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                <span class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+            </span>
+            <h1 class="text-base md:text-lg font-bold">Trading Bot</h1>
+            <span id="market-status" class="hidden md:inline text-sm px-2 py-1 rounded bg-dark-700"></span>
+        </div>
+        <div class="flex items-center gap-2 md:gap-4 text-sm">
+            <span id="clock-et" class="font-mono text-gray-300 text-xs md:text-sm"></span>
+            <button id="toggle-trading-btn" onclick="toggleTrading()" class="px-3 py-1.5 rounded text-xs font-bold min-h-[36px]"></button>
+        </div>
+    </div>
+    <div class="flex items-center justify-between mt-1.5 md:mt-0 text-xs text-gray-500">
+        <div class="flex items-center gap-3">
+            <span id="market-status-mobile" class="md:hidden text-xs px-2 py-0.5 rounded bg-dark-700"></span>
+            <span id="market-countdown"></span>
+        </div>
+        <div class="flex items-center gap-3">
+            <span id="uptime-display" class="font-mono hidden md:inline"></span>
+            <span id="last-heartbeat" class="text-gray-400"></span>
+        </div>
+    </div>
+</header>
+
+<main class="max-w-7xl mx-auto px-4 pb-8 grid gap-4">
+
+<!-- Section 1: Account Overview -->
+<section id="sec-account" class="card p-4 md:p-5">
+    <h2 class="text-sm font-semibold text-gray-400 mb-3 uppercase tracking-wide">Account Overview</h2>
+    <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 md:gap-4">
+        <div class="col-span-1">
+            <div class="text-xs md:text-xs text-gray-500">Total Equity</div>
+            <div id="acc-equity" class="text-lg md:text-xl font-bold">--</div>
+        </div>
+        <div>
+            <div class="text-xs text-gray-500">Cash</div>
+            <div id="acc-cash" class="text-base md:text-lg">--</div>
+        </div>
+        <div>
+            <div class="text-xs text-gray-500">Buying Power</div>
+            <div id="acc-bp" class="text-base md:text-lg">--</div>
+        </div>
+        <div>
+            <div class="text-xs text-gray-500">Day Trade BP</div>
+            <div id="acc-dtbp" class="text-base md:text-lg">--</div>
+        </div>
+        <div>
+            <div class="text-xs text-gray-500">Reg T BP</div>
+            <div id="acc-regt" class="text-base md:text-lg">--</div>
+        </div>
+        <div class="col-span-1">
+            <div class="text-xs text-gray-500">Today's P&L</div>
+            <div id="acc-pnl" class="text-lg md:text-xl font-bold">--</div>
+        </div>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 pt-3 border-t border-dark-700">
+        <div>
+            <div class="text-xs text-gray-500">Day Alloc Used</div>
+            <div id="day-alloc-used" class="text-sm">--</div>
+        </div>
+        <div>
+            <div class="text-xs text-gray-500">Day Alloc Avail</div>
+            <div id="day-alloc-avail" class="text-sm">--</div>
+        </div>
+        <div>
+            <div class="text-xs text-gray-500">Swing Alloc Used</div>
+            <div id="swing-alloc-used" class="text-sm">--</div>
+        </div>
+        <div>
+            <div class="text-xs text-gray-500">Swing Alloc Avail</div>
+            <div id="swing-alloc-avail" class="text-sm">--</div>
+        </div>
+    </div>
+    <!-- Margin tooltip -->
+    <p class="text-xs text-gray-600 mt-2" title="Day Trading uses DTBP (4x equity, requires $25k+ for PDT). Swing Trading uses Reg T margin (2x equity). These are tracked separately.">
+        &#9432; Day trades use DTBP (4x), Swing trades use Reg T (2x) — tracked separately
+    </p>
+</section>
+
+<!-- Section 1b: Bot Activity Panel -->
+<section id="sec-bot" class="card p-4 md:p-5">
+    <h2 class="text-sm font-semibold text-gray-400 mb-3 uppercase tracking-wide">Bot Activity</h2>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <!-- Uptime & Status -->
+        <div>
+            <div class="text-xs text-gray-500 mb-1">Uptime</div>
+            <div id="bot-uptime" class="text-lg font-mono font-bold">--</div>
+            <div id="bot-start-time" class="text-xs text-gray-600 mt-1"></div>
+        </div>
+        <!-- Scheduler Status -->
+        <div>
+            <div class="text-xs text-gray-500 mb-1">Scheduler</div>
+            <div id="scheduler-status" class="text-lg font-bold">--</div>
+            <div id="jobs-count-display" class="text-xs text-gray-600 mt-1"></div>
+        </div>
+        <!-- Market Timing -->
+        <div>
+            <div class="text-xs text-gray-500 mb-1">Market</div>
+            <div id="market-timing" class="text-lg font-bold">--</div>
+            <div id="next-market-event" class="text-xs text-gray-600 mt-1"></div>
+        </div>
+    </div>
+    <!-- Next Scheduled Jobs -->
+    <div class="mt-4 pt-3 border-t border-dark-700">
+        <div class="text-xs text-gray-500 mb-2">Upcoming Jobs</div>
+        <div id="next-jobs-list" class="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs font-mono"></div>
+    </div>
+</section>
+
+<!-- Section 2: Active Positions -->
+<section id="sec-positions" class="card p-4 md:p-5">
+    <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wide">Active Positions</h2>
+        <div class="flex gap-2 text-xs">
+            <button onclick="filterPositions('')" class="px-2 py-1 rounded bg-dark-700 hover:bg-dark-600 tab-btn" data-filter="">All</button>
+            <button onclick="filterPositions('day')" class="px-2 py-1 rounded bg-dark-700 hover:bg-dark-600 tab-btn" data-filter="day">Day</button>
+            <button onclick="filterPositions('swing')" class="px-2 py-1 rounded bg-dark-700 hover:bg-dark-600 tab-btn" data-filter="swing">Swing</button>
+        </div>
+    </div>
+    <!-- Desktop table -->
+    <div class="overflow-x-auto desktop-table">
+        <table class="w-full text-sm">
+            <thead class="text-xs text-gray-500 border-b border-dark-700">
+                <tr>
+                    <th class="text-left py-2 px-2">Symbol</th>
+                    <th class="text-left py-2 px-2">Strategy</th>
+                    <th class="text-left py-2 px-2">Side</th>
+                    <th class="text-right py-2 px-2">Qty</th>
+                    <th class="text-right py-2 px-2">Entry</th>
+                    <th class="text-right py-2 px-2">Current</th>
+                    <th class="text-right py-2 px-2">P&L</th>
+                    <th class="text-right py-2 px-2">Stop</th>
+                    <th class="text-center py-2 px-2">Action</th>
+                </tr>
+            </thead>
+            <tbody id="positions-body"></tbody>
+        </table>
+    </div>
+    <!-- Mobile card view -->
+    <div id="positions-cards" class="mobile-card space-y-2"></div>
+    <div id="positions-empty" class="text-center text-gray-600 py-6 hidden">No open positions</div>
+</section>
+
+<!-- Section 3: Trade History -->
+<section id="sec-trades" class="card p-4 md:p-5">
+    <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wide">Trade History</h2>
+        <div class="flex gap-2 text-xs">
+            <button onclick="filterTrades('')" class="px-2 py-1 rounded bg-dark-700 hover:bg-dark-600 hist-btn" data-filter="">All</button>
+            <button onclick="filterTrades('day')" class="px-2 py-1 rounded bg-dark-700 hover:bg-dark-600 hist-btn" data-filter="day">Day</button>
+            <button onclick="filterTrades('swing')" class="px-2 py-1 rounded bg-dark-700 hover:bg-dark-600 hist-btn" data-filter="swing">Swing</button>
+        </div>
+    </div>
+    <!-- Desktop table -->
+    <div class="overflow-x-auto desktop-table">
+        <table class="w-full text-sm">
+            <thead class="text-xs text-gray-500 border-b border-dark-700">
+                <tr>
+                    <th class="text-left py-2 px-2 cursor-pointer" onclick="sortTrades('symbol')">Symbol</th>
+                    <th class="text-left py-2 px-2">Strategy</th>
+                    <th class="text-left py-2 px-2">Side</th>
+                    <th class="text-right py-2 px-2">Qty</th>
+                    <th class="text-right py-2 px-2 cursor-pointer" onclick="sortTrades('entry_price')">Entry</th>
+                    <th class="text-right py-2 px-2">Exit</th>
+                    <th class="text-right py-2 px-2 cursor-pointer" onclick="sortTrades('pnl')">P&L</th>
+                    <th class="text-left py-2 px-2">Entry Time</th>
+                    <th class="text-left py-2 px-2">Status</th>
+                </tr>
+            </thead>
+            <tbody id="trades-body"></tbody>
+        </table>
+    </div>
+    <!-- Mobile card view -->
+    <div id="trades-cards" class="mobile-card space-y-2"></div>
+    <div id="trades-empty" class="text-center text-gray-600 py-6 hidden">No trade history</div>
+    <div class="text-center mt-3">
+        <button id="load-more-btn" onclick="loadMoreTrades()" class="text-xs px-3 py-1 rounded bg-dark-700 hover:bg-dark-600 hidden">Load More</button>
+    </div>
+</section>
+
+<!-- Section 4: Charts -->
+<section id="sec-charts" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <div class="card p-5">
+        <div class="flex items-center justify-between mb-3">
+            <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wide">Equity Curve</h2>
+            <div class="flex gap-1 text-xs">
+                <button onclick="setChartRange(7)" class="px-2 py-1 rounded bg-dark-700 hover:bg-dark-600">1W</button>
+                <button onclick="setChartRange(30)" class="px-2 py-1 rounded bg-dark-700 hover:bg-dark-600">1M</button>
+                <button onclick="setChartRange(90)" class="px-2 py-1 rounded bg-dark-700 hover:bg-dark-600">3M</button>
+                <button onclick="setChartRange(0)" class="px-2 py-1 rounded bg-dark-700 hover:bg-dark-600">All</button>
+            </div>
+        </div>
+        <canvas id="equity-chart" height="200"></canvas>
+    </div>
+    <div class="card p-5">
+        <div class="flex items-center justify-between mb-3">
+            <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wide">Daily P&L</h2>
+        </div>
+        <canvas id="pnl-chart" height="200"></canvas>
+    </div>
+</section>
+
+<!-- ═══════ PHASE 2 SECTIONS ═══════ -->
+
+<!-- Section 5: Performance Analytics -->
+<section id="sec-analytics" class="card p-4 md:p-5">
+    <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wide">Performance Analytics</h2>
+        <div class="flex gap-2 text-xs">
+            <button onclick="fetchAnalytics('',30)" class="px-2 py-1 rounded bg-dark-700 hover:bg-dark-600 analytics-btn" data-range="30">30d</button>
+            <button onclick="fetchAnalytics('',90)" class="px-2 py-1 rounded bg-dark-700 hover:bg-dark-600 analytics-btn tab-active" data-range="90">90d</button>
+            <button onclick="fetchAnalytics('',365)" class="px-2 py-1 rounded bg-dark-700 hover:bg-dark-600 analytics-btn" data-range="365">1Y</button>
+        </div>
+    </div>
+    <div id="analytics-insufficient" class="text-center text-gray-600 py-6 hidden">
+        Not enough closed trades for analytics yet.
+    </div>
+    <div id="analytics-content">
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 md:gap-4 mb-4">
+            <div>
+                <div class="text-xs text-gray-500">Total P&L</div>
+                <div id="an-total-pnl" class="text-lg md:text-xl font-bold">--</div>
+            </div>
+            <div>
+                <div class="text-xs text-gray-500">Win Rate</div>
+                <div id="an-win-rate" class="text-base md:text-lg font-bold">--</div>
+            </div>
+            <div>
+                <div class="text-xs text-gray-500">Sharpe Ratio</div>
+                <div id="an-sharpe" class="text-base md:text-lg font-bold">--</div>
+            </div>
+            <div>
+                <div class="text-xs text-gray-500">Profit Factor</div>
+                <div id="an-profit-factor" class="text-base md:text-lg font-bold">--</div>
+            </div>
+            <div>
+                <div class="text-xs text-gray-500">Max Drawdown</div>
+                <div id="an-max-dd" class="text-base md:text-lg font-bold">--</div>
+            </div>
+            <div>
+                <div class="text-xs text-gray-500">Expectancy</div>
+                <div id="an-expectancy" class="text-base md:text-lg font-bold">--</div>
+            </div>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 pt-3 border-t border-dark-700">
+            <div>
+                <div class="text-xs text-gray-500">Trades</div>
+                <div id="an-trades" class="text-sm">--</div>
+            </div>
+            <div>
+                <div class="text-xs text-gray-500">Avg Win / Avg Loss</div>
+                <div id="an-avg-wl" class="text-sm">--</div>
+            </div>
+            <div>
+                <div class="text-xs text-gray-500">Best Trade</div>
+                <div id="an-best" class="text-sm text-profit">--</div>
+            </div>
+            <div>
+                <div class="text-xs text-gray-500">Worst Trade</div>
+                <div id="an-worst" class="text-sm text-loss">--</div>
+            </div>
+        </div>
+        <!-- Strategy breakdown -->
+        <div class="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-dark-700">
+            <div>
+                <div class="text-xs text-gray-500 mb-1">Day Trading</div>
+                <div id="an-day-stats" class="text-xs text-gray-400">--</div>
+            </div>
+            <div>
+                <div class="text-xs text-gray-500 mb-1">Swing Trading</div>
+                <div id="an-swing-stats" class="text-xs text-gray-400">--</div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Section 6: Candlestick Chart -->
+<section id="sec-price" class="card p-4 md:p-5">
+    <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wide">Price Chart</h2>
+        <div class="flex items-center gap-2">
+            <select id="candle-symbol" onchange="fetchCandlestick()" class="bg-dark-700 border border-dark-600 text-xs md:text-xs rounded px-2 py-2 md:py-1 text-gray-200">
+                <option>AAPL</option>
+            </select>
+            <select id="candle-tf" onchange="fetchCandlestick()" class="bg-dark-700 border border-dark-600 text-xs md:text-xs rounded px-2 py-2 md:py-1 text-gray-200">
+                <option value="5Min">5 Min</option>
+                <option value="1Hour">1 Hour</option>
+                <option value="1Day">Daily</option>
+            </select>
+        </div>
+    </div>
+    <canvas id="candlestick-chart" height="280"></canvas>
+    <div class="grid grid-cols-3 gap-2 mt-3 text-xs text-center" id="candle-indicators">
+        <div class="bg-dark-700 rounded px-2 py-1">
+            <span class="text-gray-500">RSI:</span> <span id="candle-rsi" class="font-mono">--</span>
+        </div>
+        <div class="bg-dark-700 rounded px-2 py-1">
+            <span class="text-gray-500">ATR:</span> <span id="candle-atr" class="font-mono">--</span>
+        </div>
+        <div class="bg-dark-700 rounded px-2 py-1">
+            <span class="text-gray-500">VWAP:</span> <span id="candle-vwap" class="font-mono">--</span>
+        </div>
+    </div>
+</section>
+
+<!-- Section 7: Sentiment Analysis -->
+<section id="sec-sentiment" class="card p-4 md:p-5">
+    <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wide">Market Sentiment</h2>
+        <button onclick="fetchSentimentBatch()" class="text-xs px-2 py-1 rounded bg-dark-700 hover:bg-dark-600">Refresh</button>
+    </div>
+    <div id="sentiment-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2"></div>
+    <div id="sentiment-empty" class="text-center text-gray-600 py-4 hidden">Sentiment analysis disabled or loading...</div>
+</section>
+
+<!-- Section 8: Heartbeat Log -->
+<section id="sec-log" class="card p-4 md:p-5">
+    <h2 class="text-sm font-semibold text-gray-400 mb-3 uppercase tracking-wide">Heartbeat Log</h2>
+    <div id="heartbeat-log" class="max-h-72 overflow-y-auto space-y-1 font-mono text-xs"></div>
+    <div id="heartbeat-empty" class="text-center text-gray-600 py-4 hidden">No log entries yet</div>
+</section>
+
+<!-- Section 9: Manual Controls -->
+<section id="sec-controls" class="card p-4 md:p-5">
+    <h2 class="text-sm font-semibold text-gray-400 mb-3 uppercase tracking-wide">Manual Controls</h2>
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+        <button onclick="closeAllStrategy('day')" class="btn-danger px-4 py-3 md:py-2 rounded font-semibold text-sm w-full">
+            Close All Day Trades
+        </button>
+        <button onclick="closeAllStrategy('swing')" class="btn-danger px-4 py-3 md:py-2 rounded font-semibold text-sm w-full">
+            Close All Swing Trades
+        </button>
+        <button id="pause-resume-btn" onclick="togglePauseResume()" class="btn-warning px-4 py-3 md:py-2 rounded font-semibold text-sm w-full">
+            Pause Bot
+        </button>
+    </div>
+    <!-- Manual Triggers -->
+    <div class="pt-4 border-t border-dark-700">
+        <h3 class="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">Manual Triggers</h3>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+                <button id="build-universe-btn" onclick="triggerBuildUniverse()" class="px-4 py-3 md:py-2 rounded font-semibold text-sm w-full" style="background:#cba6f7;color:#11111b;">
+                    Build Day Universe
+                </button>
+                <span id="build-universe-result" class="text-xs mt-1 block"></span>
+            </div>
+            <div>
+                <button id="day-scan-btn" onclick="triggerDayScan()" class="px-4 py-3 md:py-2 rounded font-semibold text-sm w-full" style="background:#74c7ec;color:#11111b;">
+                    Run Day Trade Scan
+                </button>
+                <span id="day-scan-result" class="text-xs mt-1 block"></span>
+            </div>
+        </div>
+    </div>
+    <!-- Test Trade -->
+    <div class="pt-4 border-t border-dark-700">
+        <h3 class="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">Place Test Trade (Paper)</h3>
+        <div class="grid grid-cols-2 sm:flex sm:flex-wrap items-end gap-3">
+            <div>
+                <label class="text-xs text-gray-500 block mb-1">Symbol</label>
+                <select id="test-symbol" class="bg-dark-700 border border-dark-600 text-sm rounded px-3 py-2.5 text-gray-200 w-full">
+                    <option>AAPL</option>
+                </select>
+            </div>
+            <div>
+                <label class="text-xs text-gray-500 block mb-1">Strategy</label>
+                <select id="test-strategy" class="bg-dark-700 border border-dark-600 text-sm rounded px-3 py-2.5 text-gray-200 w-full">
+                    <option value="day">Day Trade</option>
+                    <option value="swing">Swing Trade</option>
+                </select>
+            </div>
+            <button id="test-trade-btn" onclick="placeTestTrade()" class="col-span-2 sm:col-span-1 px-4 py-3 md:py-2 rounded font-semibold text-sm" style="background:#89b4fa;color:#11111b;">
+                Buy 1 Share (Test)
+            </button>
+            <span id="test-trade-result" class="col-span-2 text-xs"></span>
+        </div>
+    </div>
+    <!-- Discord / Webhook Alerts -->
+    <div class="pt-4 mt-4 border-t border-dark-700">
+        <h3 class="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">Alerts</h3>
+        <div class="flex flex-wrap items-center gap-3">
+            <div id="alert-status" class="flex items-center gap-2 text-xs">
+                <span id="alert-webhook-badge" class="px-2 py-1 rounded-full font-bold">--</span>
+                <span id="alert-email-badge" class="px-2 py-1 rounded-full font-bold">--</span>
+            </div>
+            <button id="test-alert-btn" onclick="sendTestAlert()" class="px-4 py-2 rounded font-semibold text-sm" style="background:#7c3aed;color:white;">
+                Send Test Alert
+            </button>
+            <span id="test-alert-result" class="text-xs ml-2"></span>
+        </div>
+    </div>
+</section>
+
+</main>
+
+<!-- Mobile Bottom Navigation -->
+<nav class="mobile-nav" id="mobile-nav">
+    <div class="mobile-nav-inner">
+        <button class="mobile-nav-btn active" onclick="scrollToSection('sec-account', this)" aria-label="Account">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 100 20 10 10 0 000-20z"/><path d="M12 6v6l4 2"/></svg>
+            <span>Account</span>
+        </button>
+        <button class="mobile-nav-btn" onclick="scrollToSection('sec-positions', this)" aria-label="Positions">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h8"/></svg>
+            <span>Positions</span>
+        </button>
+        <button class="mobile-nav-btn" onclick="scrollToSection('sec-charts', this)" aria-label="Charts">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 16l4-6 4 4 4-8"/></svg>
+            <span>Charts</span>
+        </button>
+        <button class="mobile-nav-btn" onclick="scrollToSection('sec-analytics', this)" aria-label="Analytics">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+            <span>Analytics</span>
+        </button>
+        <button class="mobile-nav-btn" onclick="scrollToSection('sec-controls', this)" aria-label="Controls">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+            <span>Controls</span>
+        </button>
+    </div>
+</nav>
+
+<script>
+// ─── State ───
+let positionFilter = '';
+let tradeFilter = '';
+let tradesOffset = 0;
+let allTrades = [];
+let sortKey = '';
+let sortAsc = true;
+let chartRange = 0;
+let equityChart = null;
+let pnlChart = null;
+let botPaused = false;
+
+// ─── Mobile Navigation ───
+function scrollToSection(id, btn) {
+    const el = document.getElementById(id);
+    if (el) {
+        const headerHeight = document.querySelector('header').offsetHeight;
+        const top = el.getBoundingClientRect().top + window.scrollY - headerHeight - 8;
+        window.scrollTo({ top, behavior: 'smooth' });
+    }
+    document.querySelectorAll('.mobile-nav-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+}
+
+// Update active nav button on scroll
+let navSections = [];
+function initNavSections() {
+    navSections = ['sec-account','sec-positions','sec-charts','sec-analytics','sec-controls']
+        .map(id => ({ id, el: document.getElementById(id) })).filter(s => s.el);
+}
+window.addEventListener('scroll', () => {
+    if (!navSections.length) initNavSections();
+    const headerH = document.querySelector('header').offsetHeight + 20;
+    let current = navSections[0]?.id;
+    for (const s of navSections) {
+        if (s.el.getBoundingClientRect().top <= headerH) current = s.id;
+    }
+    document.querySelectorAll('.mobile-nav-btn').forEach((btn, i) => {
+        const targets = ['sec-account','sec-positions','sec-charts','sec-analytics','sec-controls'];
+        btn.classList.toggle('active', targets[i] === current);
+    });
+}, { passive: true });
+
+// ─── Formatting ───
+const fmt = (v, d=2) => v != null ? '$' + Number(v).toLocaleString('en-US', {minimumFractionDigits: d, maximumFractionDigits: d}) : '--';
+const pnlColor = v => v > 0 ? 'text-profit' : v < 0 ? 'text-loss' : 'text-gray-400';
+const pnlSign = v => v > 0 ? '+' : '';
+
+// ─── Clock ───
+function updateClock() {
+    const now = new Date();
+    const et = now.toLocaleString('en-US', {timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false});
+    document.getElementById('clock-et').textContent = et + ' ET';
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ─── Account ───
+async function fetchAccount() {
+    try {
+        const r = await fetch('/api/account');
+        if (!r.ok) return;
+        const d = await r.json();
+        document.getElementById('acc-equity').textContent = fmt(d.equity);
+        document.getElementById('acc-cash').textContent = fmt(d.cash);
+        document.getElementById('acc-bp').textContent = fmt(d.buying_power);
+        document.getElementById('acc-dtbp').textContent = fmt(d.day_trade_bp);
+        document.getElementById('acc-regt').textContent = fmt(d.regt_bp);
+        const pnlEl = document.getElementById('acc-pnl');
+        pnlEl.textContent = `${pnlSign(d.day_pnl)}${fmt(d.day_pnl)} (${pnlSign(d.day_pnl_pct)}${d.day_pnl_pct}%)`;
+        pnlEl.className = `text-xl font-bold ${pnlColor(d.day_pnl)}`;
+        document.getElementById('day-alloc-used').textContent = fmt(d.day_allocation_used);
+        document.getElementById('day-alloc-avail').textContent = fmt(d.day_allocation_available);
+        document.getElementById('swing-alloc-used').textContent = fmt(d.swing_allocation_used);
+        document.getElementById('swing-alloc-avail').textContent = fmt(d.swing_allocation_available);
+    } catch(e) { console.error('Account fetch error:', e); }
+}
+
+// ─── Bot Status ───
+async function fetchBotStatus() {
+    try {
+        const r = await fetch('/api/bot/status');
+        if (!r.ok) return;
+        const d = await r.json();
+        const ind = document.getElementById('status-indicator');
+        const ms = document.getElementById('market-status');
+        const pulse = document.getElementById('heartbeat-pulse');
+        botPaused = d.paused;
+
+        if (d.health_status === 'error') {
+            ind.innerHTML = '&#x1F534;';
+            pulse.children[0].className = 'animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75';
+            pulse.children[1].className = 'relative inline-flex rounded-full h-3 w-3 bg-red-500';
+        } else if (!d.running || d.paused) {
+            ind.innerHTML = '&#x1F7E1;';
+            pulse.children[0].className = 'absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75';
+            pulse.children[1].className = 'relative inline-flex rounded-full h-3 w-3 bg-yellow-500';
+        } else {
+            ind.innerHTML = '&#x1F7E2;';
+            pulse.children[0].className = 'animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75';
+            pulse.children[1].className = 'relative inline-flex rounded-full h-3 w-3 bg-green-500';
+        }
+
+        ms.textContent = d.market_open ? 'Market Open' : 'Market Closed';
+        ms.className = `hidden md:inline text-sm px-2 py-1 rounded ${d.market_open ? 'bg-green-900/30 text-profit' : 'bg-dark-700 text-gray-400'}`;
+        // Update mobile market status badge
+        const msMobile = document.getElementById('market-status-mobile');
+        if (msMobile) {
+            msMobile.textContent = d.market_open ? 'Market Open' : 'Market Closed';
+            msMobile.className = `md:hidden text-xs px-2 py-0.5 rounded ${d.market_open ? 'bg-green-900/30 text-profit' : 'bg-dark-700 text-gray-400'}`;
+        }
+
+        // Market countdown
+        const mcEl = document.getElementById('market-countdown');
+        const mtEl = document.getElementById('market-timing');
+        const nmeEl = document.getElementById('next-market-event');
+        if (d.market_open && d.next_close) {
+            const closeTime = new Date(d.next_close);
+            const diff = closeTime - new Date();
+            if (diff > 0) {
+                const h = Math.floor(diff / 3600000);
+                const m = Math.floor((diff % 3600000) / 60000);
+                mcEl.textContent = `Closes in ${h}h ${m}m`;
+                if (mtEl) { mtEl.textContent = 'OPEN'; mtEl.className = 'text-lg font-bold text-profit'; }
+                if (nmeEl) nmeEl.textContent = `Closes: ${closeTime.toLocaleTimeString('en-US', {timeZone:'America/New_York', hour:'2-digit', minute:'2-digit'})} ET`;
+            }
+        } else if (d.next_open) {
+            const openTime = new Date(d.next_open);
+            const diff = openTime - new Date();
+            if (diff > 0) {
+                const h = Math.floor(diff / 3600000);
+                const m = Math.floor((diff % 3600000) / 60000);
+                mcEl.textContent = `Opens in ${h}h ${m}m`;
+                if (mtEl) { mtEl.textContent = 'CLOSED'; mtEl.className = 'text-lg font-bold text-gray-400'; }
+                if (nmeEl) nmeEl.textContent = `Opens: ${openTime.toLocaleTimeString('en-US', {timeZone:'America/New_York', hour:'2-digit', minute:'2-digit'})} ET`;
+            }
+        }
+
+        // Scheduler status in panel
+        const ssEl = document.getElementById('scheduler-status');
+        const jcEl = document.getElementById('jobs-count-display');
+        if (ssEl) {
+            if (d.paused) { ssEl.textContent = 'PAUSED'; ssEl.className = 'text-lg font-bold text-yellow-400'; }
+            else if (d.running) { ssEl.textContent = 'RUNNING'; ssEl.className = 'text-lg font-bold text-profit'; }
+            else { ssEl.textContent = 'STOPPED'; ssEl.className = 'text-lg font-bold text-loss'; }
+        }
+        if (jcEl) jcEl.textContent = `${d.jobs_count} jobs registered`;
+
+        const tb = document.getElementById('toggle-trading-btn');
+        tb.textContent = d.trading_enabled ? 'Trading ON' : 'Trading OFF';
+        tb.className = `px-3 py-1 rounded text-xs font-bold ${d.trading_enabled ? 'bg-green-900/50 text-profit' : 'bg-red-900/50 text-loss'}`;
+
+        const pb = document.getElementById('pause-resume-btn');
+        pb.textContent = d.paused ? 'Resume Bot' : 'Pause Bot';
+        pb.className = d.paused ? 'btn-success px-4 py-2 rounded font-semibold text-sm' : 'btn-warning px-4 py-2 rounded font-semibold text-sm';
+
+        if (d.last_heartbeat) {
+            const ago = Math.round((Date.now() - new Date(d.last_heartbeat).getTime()) / 1000);
+            document.getElementById('last-heartbeat').textContent = `Last check: ${ago}s ago`;
+        }
+    } catch(e) { console.error('Status fetch error:', e); }
+}
+
+// ─── Bot Details (uptime, jobs) ───
+async function fetchBotDetails() {
+    try {
+        const r = await fetch('/api/bot/details');
+        if (!r.ok) return;
+        const d = await r.json();
+
+        // Uptime
+        const uptimeEl = document.getElementById('bot-uptime');
+        const startEl = document.getElementById('bot-start-time');
+        if (uptimeEl && d.uptime_seconds != null) {
+            const s = d.uptime_seconds;
+            const h = Math.floor(s / 3600);
+            const m = Math.floor((s % 3600) / 60);
+            const sec = s % 60;
+            uptimeEl.textContent = `${h}h ${m}m ${sec}s`;
+        }
+        if (startEl && d.start_time) {
+            startEl.textContent = `Since ${new Date(d.start_time + 'Z').toLocaleTimeString()}`;
+        }
+
+        // Upcoming jobs
+        const jobsEl = document.getElementById('next-jobs-list');
+        if (jobsEl && d.jobs) {
+            jobsEl.innerHTML = d.jobs.map(j => {
+                const name = j.id.replace(/_/g, ' ');
+                return `<div class="bg-dark-700 rounded px-2 py-1.5">
+                    <div class="text-gray-400 truncate">${name}</div>
+                    <div class="text-gray-200 font-semibold">${j.next_run_human}</div>
+                </div>`;
+            }).join('');
+        }
+    } catch(e) { console.error('Bot details error:', e); }
+}
+
+// ─── Test Trade ───
+async function placeTestTrade() {
+    const symbol = document.getElementById('test-symbol').value;
+    const strategy = document.getElementById('test-strategy').value;
+    const btn = document.getElementById('test-trade-btn');
+    const result = document.getElementById('test-trade-result');
+
+    btn.disabled = true;
+    btn.textContent = 'Placing...';
+    result.textContent = '';
+
+    try {
+        const r = await fetch('/api/test-trade', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol, strategy_type: strategy})
+        });
+        const d = await r.json();
+        if (d.success) {
+            result.textContent = d.message;
+            result.className = 'text-xs ml-2 text-profit';
+            // Refresh positions and trades
+            fetchPositions();
+            fetchTrades();
+            fetchHeartbeat();
+        } else {
+            result.textContent = d.message || 'Failed';
+            result.className = 'text-xs ml-2 text-loss';
+        }
+    } catch(e) {
+        result.textContent = 'Error: ' + e.message;
+        result.className = 'text-xs ml-2 text-loss';
+    }
+
+    btn.disabled = false;
+    btn.textContent = 'Buy 1 Share (Test)';
+}
+
+// ─── Manual Triggers ───
+async function triggerBuildUniverse() {
+    const btn = document.getElementById('build-universe-btn');
+    const result = document.getElementById('build-universe-result');
+    btn.disabled = true;
+    btn.textContent = 'Building...';
+    result.textContent = '';
+    try {
+        const r = await fetch('/api/trigger/build-universe', { method: 'POST' });
+        const d = await r.json();
+        if (d.success) {
+            result.textContent = d.message;
+            result.className = 'text-xs mt-1 block text-profit';
+            fetchWatchlist();
+        } else {
+            result.textContent = d.message || 'Failed';
+            result.className = 'text-xs mt-1 block text-loss';
+        }
+    } catch(e) {
+        result.textContent = 'Error: ' + e.message;
+        result.className = 'text-xs mt-1 block text-loss';
+    }
+    btn.disabled = false;
+    btn.textContent = 'Build Day Universe';
+}
+
+async function triggerDayScan() {
+    const btn = document.getElementById('day-scan-btn');
+    const result = document.getElementById('day-scan-result');
+    btn.disabled = true;
+    btn.textContent = 'Scanning...';
+    result.textContent = '';
+    try {
+        const r = await fetch('/api/trigger/day-scan', { method: 'POST' });
+        const d = await r.json();
+        if (d.success) {
+            result.textContent = d.message;
+            result.className = 'text-xs mt-1 block text-profit';
+            fetchPositions();
+            fetchTrades();
+            fetchHeartbeat();
+        } else {
+            result.textContent = d.message || 'Failed';
+            result.className = 'text-xs mt-1 block text-loss';
+        }
+    } catch(e) {
+        result.textContent = 'Error: ' + e.message;
+        result.className = 'text-xs mt-1 block text-loss';
+    }
+    btn.disabled = false;
+    btn.textContent = 'Run Day Trade Scan';
+}
+
+// ─── Positions ───
+async function fetchPositions() {
+    try {
+        const url = positionFilter ? `/api/positions?strategy=${positionFilter}` : '/api/positions';
+        const r = await fetch(url);
+        if (!r.ok) return;
+        const data = await r.json();
+        const body = document.getElementById('positions-body');
+        const cards = document.getElementById('positions-cards');
+        const empty = document.getElementById('positions-empty');
+        if (!data.length) {
+            body.innerHTML = '';
+            if (cards) cards.innerHTML = '';
+            empty.classList.remove('hidden');
+            return;
+        }
+        empty.classList.add('hidden');
+        // Desktop table
+        body.innerHTML = data.map(p => {
+            const pl = p.unrealized_pl || ((p.current_price - p.entry_price) * p.quantity);
+            const plPct = p.entry_price ? ((p.current_price - p.entry_price) / p.entry_price * 100) : 0;
+            const rowClass = pl > 0 ? 'profit-row' : pl < 0 ? 'loss-row' : '';
+            const badge = p.strategy_type === 'day' ? 'badge-day' : 'badge-swing';
+            return `<tr class="${rowClass} border-b border-dark-700 hover:bg-dark-700/50">
+                <td class="py-2 px-2 font-semibold">${p.symbol}</td>
+                <td class="py-2 px-2"><span class="${badge} text-xs px-2 py-0.5 rounded-full font-bold">${p.strategy_type}</span></td>
+                <td class="py-2 px-2">${p.side}</td>
+                <td class="py-2 px-2 text-right">${p.quantity}</td>
+                <td class="py-2 px-2 text-right">${fmt(p.entry_price)}</td>
+                <td class="py-2 px-2 text-right">${fmt(p.current_price)}</td>
+                <td class="py-2 px-2 text-right ${pnlColor(pl)}">${pnlSign(pl)}${fmt(pl)} (${pnlSign(plPct)}${plPct.toFixed(1)}%)</td>
+                <td class="py-2 px-2 text-right">${fmt(p.stop_loss)}</td>
+                <td class="py-2 px-2 text-center">
+                    <button onclick="closeTrade(${p.id}, '${p.symbol}')" class="text-xs btn-danger px-2 py-1 rounded">Close</button>
+                </td>
+            </tr>`;
+        }).join('');
+        // Mobile cards
+        if (cards) {
+            cards.innerHTML = data.map(p => {
+                const pl = p.unrealized_pl || ((p.current_price - p.entry_price) * p.quantity);
+                const plPct = p.entry_price ? ((p.current_price - p.entry_price) / p.entry_price * 100) : 0;
+                const badge = p.strategy_type === 'day' ? 'badge-day' : 'badge-swing';
+                const borderColor = pl > 0 ? 'border-l-4 border-l-green-500' : pl < 0 ? 'border-l-4 border-l-red-400' : '';
+                return `<div class="mobile-card-item ${borderColor}">
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="flex items-center gap-2">
+                            <span class="font-bold text-base">${p.symbol}</span>
+                            <span class="${badge} text-xs px-2 py-0.5 rounded-full font-bold">${p.strategy_type}</span>
+                        </div>
+                        <span class="font-bold text-base ${pnlColor(pl)}">${pnlSign(pl)}${fmt(pl)}</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                        <div class="mobile-card-row"><span class="label">Side</span><span class="value">${p.side}</span></div>
+                        <div class="mobile-card-row"><span class="label">Qty</span><span class="value">${p.quantity}</span></div>
+                        <div class="mobile-card-row"><span class="label">Entry</span><span class="value">${fmt(p.entry_price)}</span></div>
+                        <div class="mobile-card-row"><span class="label">Current</span><span class="value">${fmt(p.current_price)}</span></div>
+                        <div class="mobile-card-row"><span class="label">P&L %</span><span class="value ${pnlColor(pl)}">${pnlSign(plPct)}${plPct.toFixed(1)}%</span></div>
+                        <div class="mobile-card-row"><span class="label">Stop</span><span class="value">${fmt(p.stop_loss)}</span></div>
+                    </div>
+                    <div class="mt-3 flex justify-end">
+                        <button onclick="closeTrade(${p.id}, '${p.symbol}')" class="btn-danger px-4 py-2 rounded text-sm font-semibold">Close Position</button>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+    } catch(e) { console.error('Positions fetch error:', e); }
+}
+
+function filterPositions(f) {
+    positionFilter = f;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('tab-active', b.dataset.filter === f));
+    fetchPositions();
+}
+
+// ─── Trades ───
+async function fetchTrades(append=false) {
+    try {
+        let url = `/api/trades?limit=50&offset=${tradesOffset}`;
+        if (tradeFilter) url += `&strategy=${tradeFilter}`;
+        const r = await fetch(url);
+        if (!r.ok) return;
+        const data = await r.json();
+        if (append) { allTrades = allTrades.concat(data); }
+        else { allTrades = data; }
+        renderTrades();
+        document.getElementById('load-more-btn').classList.toggle('hidden', data.length < 50);
+    } catch(e) { console.error('Trades fetch error:', e); }
+}
+
+function renderTrades() {
+    let data = [...allTrades];
+    if (sortKey) {
+        data.sort((a, b) => {
+            let va = a[sortKey], vb = b[sortKey];
+            if (typeof va === 'string') return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+            return sortAsc ? (va||0) - (vb||0) : (vb||0) - (va||0);
+        });
+    }
+    const body = document.getElementById('trades-body');
+    const cards = document.getElementById('trades-cards');
+    const empty = document.getElementById('trades-empty');
+    if (!data.length) {
+        body.innerHTML = '';
+        if (cards) cards.innerHTML = '';
+        empty.classList.remove('hidden');
+        return;
+    }
+    empty.classList.add('hidden');
+    const statusColors = { closed: 'text-gray-400', stopped_out: 'text-loss', eod_liquidated: 'text-yellow-400', open: 'text-profit' };
+    // Desktop table
+    body.innerHTML = data.map(t => {
+        const pl = t.pnl || 0;
+        const plPct = t.entry_price && t.exit_price ? ((t.exit_price - t.entry_price) / t.entry_price * 100) : 0;
+        const badge = t.strategy_type === 'day' ? 'badge-day' : 'badge-swing';
+        return `<tr class="border-b border-dark-700 hover:bg-dark-700/50">
+            <td class="py-2 px-2 font-semibold">${t.symbol}</td>
+            <td class="py-2 px-2"><span class="${badge} text-xs px-2 py-0.5 rounded-full font-bold">${t.strategy_type}</span></td>
+            <td class="py-2 px-2">${t.side}</td>
+            <td class="py-2 px-2 text-right">${t.quantity}</td>
+            <td class="py-2 px-2 text-right">${fmt(t.entry_price)}</td>
+            <td class="py-2 px-2 text-right">${t.exit_price ? fmt(t.exit_price) : '--'}</td>
+            <td class="py-2 px-2 text-right ${pnlColor(pl)}">${pnlSign(pl)}${fmt(pl)} (${pnlSign(plPct)}${plPct.toFixed(1)}%)</td>
+            <td class="py-2 px-2 text-xs text-gray-400">${t.entry_time ? new Date(t.entry_time).toLocaleString() : '--'}</td>
+            <td class="py-2 px-2 text-xs ${statusColors[t.status] || 'text-gray-400'}">${t.status}</td>
+        </tr>`;
+    }).join('');
+    // Mobile cards
+    if (cards) {
+        cards.innerHTML = data.map(t => {
+            const pl = t.pnl || 0;
+            const plPct = t.entry_price && t.exit_price ? ((t.exit_price - t.entry_price) / t.entry_price * 100) : 0;
+            const badge = t.strategy_type === 'day' ? 'badge-day' : 'badge-swing';
+            const borderColor = pl > 0 ? 'border-l-4 border-l-green-500' : pl < 0 ? 'border-l-4 border-l-red-400' : '';
+            return `<div class="mobile-card-item ${borderColor}">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                        <span class="font-bold text-base">${t.symbol}</span>
+                        <span class="${badge} text-xs px-2 py-0.5 rounded-full font-bold">${t.strategy_type}</span>
+                    </div>
+                    <span class="font-bold text-base ${pnlColor(pl)}">${pnlSign(pl)}${fmt(pl)}</span>
+                </div>
+                <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                    <div class="mobile-card-row"><span class="label">Side</span><span class="value">${t.side}</span></div>
+                    <div class="mobile-card-row"><span class="label">Qty</span><span class="value">${t.quantity}</span></div>
+                    <div class="mobile-card-row"><span class="label">Entry</span><span class="value">${fmt(t.entry_price)}</span></div>
+                    <div class="mobile-card-row"><span class="label">Exit</span><span class="value">${t.exit_price ? fmt(t.exit_price) : '--'}</span></div>
+                    <div class="mobile-card-row"><span class="label">P&L %</span><span class="value ${pnlColor(pl)}">${pnlSign(plPct)}${plPct.toFixed(1)}%</span></div>
+                    <div class="mobile-card-row"><span class="label">Status</span><span class="value text-xs ${statusColors[t.status] || 'text-gray-400'}">${t.status}</span></div>
+                </div>
+                <div class="text-xs text-gray-500 mt-2">${t.entry_time ? new Date(t.entry_time).toLocaleString() : ''}</div>
+            </div>`;
+        }).join('');
+    }
+}
+
+function filterTrades(f) {
+    tradeFilter = f;
+    tradesOffset = 0;
+    document.querySelectorAll('.hist-btn').forEach(b => b.classList.toggle('tab-active', b.dataset.filter === f));
+    fetchTrades();
+}
+
+function sortTrades(key) {
+    if (sortKey === key) sortAsc = !sortAsc;
+    else { sortKey = key; sortAsc = true; }
+    renderTrades();
+}
+
+function loadMoreTrades() {
+    tradesOffset += 50;
+    fetchTrades(true);
+}
+
+// ─── Charts ───
+async function fetchCharts() {
+    try {
+        const [eqRes, pnlRes] = await Promise.all([
+            fetch('/api/equity-history'),
+            fetch('/api/pnl-daily')
+        ]);
+        if (eqRes.ok) {
+            let eqData = await eqRes.json();
+            if (chartRange > 0) {
+                const cutoff = new Date();
+                cutoff.setDate(cutoff.getDate() - chartRange);
+                eqData = eqData.filter(d => new Date(d.date) >= cutoff);
+            }
+            updateEquityChart(eqData);
+        }
+        if (pnlRes.ok) {
+            let pnlData = await pnlRes.json();
+            if (chartRange > 0) {
+                const cutoff = new Date();
+                cutoff.setDate(cutoff.getDate() - chartRange);
+                pnlData = pnlData.filter(d => new Date(d.date) >= cutoff);
+            }
+            updatePnlChart(pnlData);
+        }
+    } catch(e) { console.error('Chart fetch error:', e); }
+}
+
+function updateEquityChart(data) {
+    const ctx = document.getElementById('equity-chart').getContext('2d');
+    if (equityChart) equityChart.destroy();
+    equityChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: data.map(d => d.date),
+            datasets: [{
+                label: 'Equity',
+                data: data.map(d => d.equity),
+                borderColor: '#89b4fa',
+                backgroundColor: 'rgba(137,180,250,0.1)',
+                fill: true,
+                tension: 0.3,
+                pointRadius: 2,
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { ticks: { color: '#6c7086', maxTicksLimit: 10 }, grid: { color: '#313244' } },
+                y: { ticks: { color: '#6c7086', callback: v => '$' + v.toLocaleString() }, grid: { color: '#313244' } }
+            }
+        }
+    });
+}
+
+function updatePnlChart(data) {
+    const ctx = document.getElementById('pnl-chart').getContext('2d');
+    if (pnlChart) pnlChart.destroy();
+    pnlChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: data.map(d => d.date),
+            datasets: [
+                { label: 'Day P&L', data: data.map(d => d.day_pnl), backgroundColor: '#89b4fa' },
+                { label: 'Swing P&L', data: data.map(d => d.swing_pnl), backgroundColor: '#fab387' }
+            ]
+        },
+        options: {
+            responsive: true,
+            plugins: { legend: { labels: { color: '#cdd6f4' } } },
+            scales: {
+                x: { ticks: { color: '#6c7086', maxTicksLimit: 10 }, grid: { color: '#313244' } },
+                y: { ticks: { color: '#6c7086', callback: v => '$' + v.toLocaleString() }, grid: { color: '#313244' } }
+            }
+        }
+    });
+}
+
+function setChartRange(days) { chartRange = days; fetchCharts(); }
+
+// ─── Heartbeat ───
+async function fetchHeartbeat() {
+    try {
+        const r = await fetch('/api/heartbeat');
+        if (!r.ok) return;
+        const data = await r.json();
+        const log = document.getElementById('heartbeat-log');
+        const empty = document.getElementById('heartbeat-empty');
+        if (!data.length) { log.innerHTML = ''; empty.classList.remove('hidden'); return; }
+        empty.classList.add('hidden');
+        log.innerHTML = data.map(e => {
+            const t = new Date(e.timestamp).toLocaleTimeString('en-US', {hour12: false});
+            return `<div class="log-${e.level} pl-2 py-1 text-gray-300">[${t}] ${e.message}</div>`;
+        }).join('');
+    } catch(e) { console.error('Heartbeat fetch error:', e); }
+}
+
+// ─── Actions ───
+async function closeTrade(id, symbol) {
+    if (!confirm(`Close position in ${symbol}?`)) return;
+    try {
+        const r = await fetch(`/api/close/${id}`, {method: 'POST'});
+        const d = await r.json();
+        if (d.success) fetchPositions();
+        else alert(d.message || 'Failed to close');
+    } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function closeAllStrategy(type) {
+    const count = document.querySelectorAll(`#positions-body tr`).length;
+    if (!confirm(`This will liquidate all ${type} trade positions. Proceed?`)) return;
+    try {
+        const r = await fetch(`/api/close-all/${type}`, {method: 'POST'});
+        const d = await r.json();
+        alert(`Closed ${d.closed_count} positions. Errors: ${d.errors?.length || 0}`);
+        fetchPositions();
+    } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function togglePauseResume() {
+    const action = botPaused ? 'resume' : 'pause';
+    if (!confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} the bot?`)) return;
+    try {
+        await fetch(`/api/bot/${action}`, {method: 'POST'});
+        fetchBotStatus();
+    } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function toggleTrading() {
+    if (!confirm('Toggle trading mode?')) return;
+    try {
+        const r = await fetch('/api/bot/toggle-trading', {method: 'POST'});
+        const d = await r.json();
+        fetchBotStatus();
+    } catch(e) { alert('Error: ' + e.message); }
+}
+
+// ─── Alert Controls ───
+async function fetchAlertConfig() {
+    try {
+        const r = await fetch('/api/alerts/config');
+        if (!r.ok) return;
+        const d = await r.json();
+
+        const whBadge = document.getElementById('alert-webhook-badge');
+        if (d.webhook_enabled && d.webhook_configured) {
+            whBadge.textContent = 'Discord ON';
+            whBadge.className = 'px-2 py-1 rounded-full font-bold text-xs bg-green-900/50 text-profit';
+        } else if (d.webhook_enabled) {
+            whBadge.textContent = 'Webhook: No URL';
+            whBadge.className = 'px-2 py-1 rounded-full font-bold text-xs bg-yellow-900/50 text-yellow-400';
+        } else {
+            whBadge.textContent = 'Webhook OFF';
+            whBadge.className = 'px-2 py-1 rounded-full font-bold text-xs bg-dark-700 text-gray-500';
+        }
+
+        const emBadge = document.getElementById('alert-email-badge');
+        if (d.email_enabled && d.smtp_configured) {
+            emBadge.textContent = 'Email ON';
+            emBadge.className = 'px-2 py-1 rounded-full font-bold text-xs bg-green-900/50 text-profit';
+        } else if (d.email_enabled) {
+            emBadge.textContent = 'Email: Not configured';
+            emBadge.className = 'px-2 py-1 rounded-full font-bold text-xs bg-yellow-900/50 text-yellow-400';
+        } else {
+            emBadge.textContent = 'Email OFF';
+            emBadge.className = 'px-2 py-1 rounded-full font-bold text-xs bg-dark-700 text-gray-500';
+        }
+    } catch(e) { console.error('Alert config error:', e); }
+}
+
+async function sendTestAlert() {
+    const btn = document.getElementById('test-alert-btn');
+    const result = document.getElementById('test-alert-result');
+    btn.disabled = true;
+    btn.textContent = 'Sending...';
+    result.textContent = '';
+
+    try {
+        const r = await fetch('/api/alerts/test', { method: 'POST' });
+        const d = await r.json();
+        if (d.success) {
+            result.textContent = 'Test alert sent! Check your Discord.';
+            result.className = 'text-xs ml-2 text-profit';
+        } else {
+            result.textContent = d.message || 'Failed';
+            result.className = 'text-xs ml-2 text-loss';
+        }
+    } catch(e) {
+        result.textContent = 'Error: ' + e.message;
+        result.className = 'text-xs ml-2 text-loss';
+    }
+
+    btn.disabled = false;
+    btn.textContent = 'Send Test Alert';
+}
+
+// ═══════ PHASE 2 FUNCTIONS ═══════
+
+// ─── Analytics ───
+let analyticsLookback = 90;
+async function fetchAnalytics(strategy='', lookback=null) {
+    if (lookback) analyticsLookback = lookback;
+    document.querySelectorAll('.analytics-btn').forEach(b => b.classList.toggle('tab-active', b.dataset.range == analyticsLookback));
+    try {
+        let url = `/api/analytics?lookback=${analyticsLookback}`;
+        if (strategy) url += `&strategy=${strategy}`;
+        const r = await fetch(url);
+        if (!r.ok) return;
+        const d = await r.json();
+
+        const insuf = document.getElementById('analytics-insufficient');
+        const content = document.getElementById('analytics-content');
+
+        if (!d.sufficient_data) {
+            insuf.classList.remove('hidden');
+            content.style.opacity = '0.3';
+        } else {
+            insuf.classList.add('hidden');
+            content.style.opacity = '1';
+        }
+
+        const anPnl = document.getElementById('an-total-pnl');
+        if (anPnl && d.total_pnl != null) {
+            anPnl.textContent = `${d.total_pnl >= 0 ? '+' : ''}${fmt(d.total_pnl)}`;
+            anPnl.className = `text-xl font-bold ${pnlColor(d.total_pnl)}`;
+        }
+
+        const setEl = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+        setEl('an-win-rate', d.win_rate != null ? `${d.win_rate}%` : '--');
+        setEl('an-sharpe', d.sharpe_ratio != null ? d.sharpe_ratio : '--');
+        setEl('an-profit-factor', d.profit_factor != null ? d.profit_factor : '--');
+        setEl('an-max-dd', d.max_drawdown_pct != null ? `-${d.max_drawdown_pct}%` : '--');
+        setEl('an-expectancy', d.expectancy != null ? fmt(d.expectancy) : '--');
+        setEl('an-trades', d.total_trades != null ? `${d.win_count}W / ${d.loss_count}L / ${d.scratch_count}S (${d.total_trades} total)` : '--');
+        setEl('an-avg-wl', d.avg_win != null ? `${fmt(d.avg_win)} / ${fmt(d.avg_loss)}` : '--');
+
+        if (d.best_trade) setEl('an-best', `${d.best_trade.symbol} +${fmt(d.best_trade.pnl)}`);
+        if (d.worst_trade) setEl('an-worst', `${d.worst_trade.symbol} ${fmt(d.worst_trade.pnl)}`);
+
+        if (d.by_strategy) {
+            const ds = d.by_strategy.day || {};
+            const ss = d.by_strategy.swing || {};
+            setEl('an-day-stats', `${ds.total_trades || 0} trades, ${fmt(ds.total_pnl || 0)} P&L, ${ds.win_rate || 0}% win`);
+            setEl('an-swing-stats', `${ss.total_trades || 0} trades, ${fmt(ss.total_pnl || 0)} P&L, ${ss.win_rate || 0}% win`);
+        }
+    } catch(e) { console.error('Analytics error:', e); }
+}
+
+// ─── Candlestick Chart ───
+let candleChart = null;
+async function fetchCandlestick() {
+    const symbol = document.getElementById('candle-symbol').value;
+    const tf = document.getElementById('candle-tf').value;
+    try {
+        const r = await fetch(`/api/chart/candlestick/${symbol}?timeframe=${tf}&limit=60`);
+        if (!r.ok) return;
+        const d = await r.json();
+
+        if (!d.candles || !d.candles.length) return;
+
+        const labels = d.candles.map(c => {
+            const ts = c.timestamp;
+            if (tf === '1Day') return ts.slice(0, 10);
+            return ts.slice(11, 16);
+        });
+        const closes = d.candles.map(c => c.close);
+        const highs = d.candles.map(c => c.high);
+        const lows = d.candles.map(c => c.low);
+        const vwaps = d.candles.map(c => c.vwap || null);
+        const sma50s = d.candles.map(c => c.sma_50 || null);
+
+        const ctx = document.getElementById('candlestick-chart').getContext('2d');
+        if (candleChart) candleChart.destroy();
+
+        const datasets = [
+            {
+                label: 'Close',
+                data: closes,
+                borderColor: '#89b4fa',
+                backgroundColor: 'rgba(137,180,250,0.05)',
+                fill: true,
+                tension: 0.2,
+                pointRadius: 0,
+                borderWidth: 2,
+            },
+            {
+                label: 'High',
+                data: highs,
+                borderColor: 'rgba(166,227,161,0.3)',
+                borderDash: [2,2],
+                pointRadius: 0,
+                borderWidth: 1,
+                fill: false,
+            },
+            {
+                label: 'Low',
+                data: lows,
+                borderColor: 'rgba(243,139,168,0.3)',
+                borderDash: [2,2],
+                pointRadius: 0,
+                borderWidth: 1,
+                fill: false,
+            },
+        ];
+
+        // Add VWAP if available
+        if (vwaps.some(v => v !== null)) {
+            datasets.push({
+                label: 'VWAP',
+                data: vwaps,
+                borderColor: '#f9e2af',
+                borderWidth: 1.5,
+                pointRadius: 0,
+                fill: false,
+                borderDash: [4,2],
+            });
+        }
+        // Add SMA50 if available
+        if (sma50s.some(v => v !== null)) {
+            datasets.push({
+                label: 'SMA 50',
+                data: sma50s,
+                borderColor: '#fab387',
+                borderWidth: 1.5,
+                pointRadius: 0,
+                fill: false,
+            });
+        }
+
+        candleChart = new Chart(ctx, {
+            type: 'line',
+            data: { labels, datasets },
+            options: {
+                responsive: true,
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend: { labels: { color: '#6c7086', font: { size: 10 } } } },
+                scales: {
+                    x: { ticks: { color: '#6c7086', maxTicksLimit: 12, font: { size: 9 } }, grid: { color: '#313244' } },
+                    y: { ticks: { color: '#6c7086', callback: v => '$' + v.toFixed(2) }, grid: { color: '#313244' } }
+                }
+            }
+        });
+
+        // Update indicator readouts
+        const last = d.candles[d.candles.length - 1];
+        document.getElementById('candle-rsi').textContent = last.rsi ? last.rsi.toFixed(1) : '--';
+        document.getElementById('candle-atr').textContent = last.atr ? '$' + last.atr.toFixed(2) : '--';
+        document.getElementById('candle-vwap').textContent = last.vwap ? '$' + last.vwap.toFixed(2) : '--';
+
+    } catch(e) { console.error('Candlestick error:', e); }
+}
+
+// ─── Sentiment ───
+async function fetchSentimentBatch() {
+    try {
+        const r = await fetch('/api/sentiment');
+        if (!r.ok) return;
+        const d = await r.json();
+        const grid = document.getElementById('sentiment-grid');
+        const empty = document.getElementById('sentiment-empty');
+
+        const symbols = Object.keys(d);
+        if (!symbols.length) { empty.classList.remove('hidden'); grid.innerHTML = ''; return; }
+        empty.classList.add('hidden');
+
+        grid.innerHTML = symbols.sort().map(sym => {
+            const s = d[sym];
+            const scoreColor = s.label === 'bullish' ? 'text-profit' : s.label === 'bearish' ? 'text-loss' : 'text-gray-400';
+            const bgColor = s.label === 'bullish' ? 'bg-green-900/20' : s.label === 'bearish' ? 'bg-red-900/20' : 'bg-dark-700';
+            const bar = Math.abs(s.score) * 100;
+            const barColor = s.score >= 0 ? '#a6e3a1' : '#f38ba8';
+            return `<div class="${bgColor} rounded px-3 py-2 text-center">
+                <div class="font-bold text-sm">${sym}</div>
+                <div class="${scoreColor} text-xs font-semibold">${s.label.toUpperCase()}</div>
+                <div class="text-xs font-mono ${scoreColor}">${s.score >= 0 ? '+' : ''}${s.score.toFixed(3)}</div>
+                <div class="w-full bg-dark-600 rounded-full h-1 mt-1">
+                    <div class="h-1 rounded-full" style="width:${Math.min(bar, 100)}%;background:${barColor};"></div>
+                </div>
+                <div class="text-xs text-gray-600 mt-1">${s.articles_analyzed} articles</div>
+            </div>`;
+        }).join('');
+    } catch(e) { console.error('Sentiment error:', e); }
+}
+
+// ─── Watchlist ───
+async function fetchWatchlist() {
+    try {
+        const r = await fetch('/api/watchlist');
+        if (!r.ok) return;
+        const d = await r.json();
+        const daySymbols = d.day_trade || [];
+
+        // Populate candlestick chart dropdown
+        const candleSel = document.getElementById('candle-symbol');
+        const currentCandle = candleSel.value;
+        candleSel.innerHTML = daySymbols.map(s =>
+            `<option ${s === currentCandle ? 'selected' : ''}>${s}</option>`
+        ).join('');
+
+        // Populate test trade dropdown
+        const testSel = document.getElementById('test-symbol');
+        const currentTest = testSel.value;
+        testSel.innerHTML = daySymbols.map(s =>
+            `<option ${s === currentTest ? 'selected' : ''}>${s}</option>`
+        ).join('');
+    } catch(e) { console.error('Watchlist fetch error:', e); }
+}
+
+// ─── Polling ───
+function startPolling() {
+    fetchWatchlist(); fetchAccount(); fetchBotStatus(); fetchBotDetails(); fetchPositions(); fetchTrades(); fetchHeartbeat(); fetchCharts();
+    fetchAnalytics(); fetchCandlestick(); fetchSentimentBatch(); fetchAlertConfig();
+    setInterval(() => { fetchAccount(); fetchBotStatus(); fetchPositions(); fetchHeartbeat(); }, {{ poll_interval }});
+    setInterval(fetchWatchlist, 300000);    // Refresh watchlist every 5 min
+    setInterval(fetchBotDetails, 10000);
+    setInterval(fetchTrades, 30000);
+    setInterval(fetchCharts, {{ chart_refresh }});
+    setInterval(fetchAnalytics, 120000);    // Analytics every 2 min
+    setInterval(fetchCandlestick, 60000);   // Candlestick every 1 min
+    setInterval(fetchSentimentBatch, 300000); // Sentiment every 5 min
+}
+
+startPolling();
+</script>
+
+</body>
+</html>

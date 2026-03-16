@@ -1,0 +1,15 @@
+# Database
+*.db
+*.db-journal
+
+# Logs
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Large data files
+backtest_data.json
+.env
