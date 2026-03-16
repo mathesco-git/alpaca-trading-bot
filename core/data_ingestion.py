@@ -5,13 +5,13 @@ Computes RSI, SMA, ATR, VWAP, and volume averages using pandas + numpy.
 """
 
 import logging
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 from datetime import datetime
 
 import numpy as np
 import pandas as pd
 
-from core.alpaca_client import get_bars
+from core.alpaca_client import get_bars, get_multi_symbol_bars
 from config import ATR_PERIOD, RSI_PERIOD, SWING_SMA_FAST, SWING_SMA_SLOW, SWING_SMA_ADAPTIVE_FAST
 
 logger = logging.getLogger(__name__)
@@ -163,6 +163,36 @@ def get_daily_data(symbol: str, limit: int = 250) -> Optional[pd.DataFrame]:
     if df is None:
         return None
     return compute_indicators(df, include_sma=True)
+
+
+def get_intraday_data_batch(symbols: List[str], limit: int = 100,
+                            batch_size: int = 100) -> Dict[str, pd.DataFrame]:
+    """Fetch 5-minute bars for many symbols at once, with indicators computed per symbol."""
+    raw = get_multi_symbol_bars(symbols, timeframe="5Min", limit=limit, batch_size=batch_size)
+    result = {}
+    for sym, df in raw.items():
+        try:
+            enriched = compute_indicators(df, include_sma=False)
+            if enriched is not None:
+                result[sym] = enriched
+        except Exception as e:
+            logger.warning(f"Failed to compute intraday indicators for {sym}: {e}")
+    return result
+
+
+def get_daily_data_batch(symbols: List[str], limit: int = 60,
+                         batch_size: int = 100) -> Dict[str, pd.DataFrame]:
+    """Fetch daily bars for many symbols at once, with indicators computed per symbol."""
+    raw = get_multi_symbol_bars(symbols, timeframe="1Day", limit=limit, batch_size=batch_size)
+    result = {}
+    for sym, df in raw.items():
+        try:
+            enriched = compute_indicators(df, include_sma=True)
+            if enriched is not None:
+                result[sym] = enriched
+        except Exception as e:
+            logger.warning(f"Failed to compute daily indicators for {sym}: {e}")
+    return result
 
 
 def get_sma_slope(df: pd.DataFrame, sma_column: str, periods: int = 5) -> Optional[float]:

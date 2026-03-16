@@ -276,7 +276,7 @@ def generate_signal(symbol: str, intraday_df: Optional[pd.DataFrame] = None,
         f"VWAP breakout: price ${current_price:.2f} > VWAP ${vwap:.2f}, "
         f"volume {volume:.0f} ({volume_ratio:.1f}x avg), "
         f"RSI {rsi:.1f} [{DAY_RSI_ENTRY_THRESHOLD}-{DAY_RSI_ENTRY_CEILING}], "
-        f"daily ATR ${daily_atr:.2f}, daily RSI {daily_rsi:.1f if daily_rsi else 'N/A'}"
+        f"daily ATR ${daily_atr:.2f}, daily RSI {f'{daily_rsi:.1f}' if daily_rsi else 'N/A'}"
     )
     logger.info(f"[{symbol}] BUY signal: {result['reason']}")
     return result

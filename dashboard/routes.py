@@ -588,6 +588,32 @@ async def api_alerts_config():
     }
 
 
+@router.post("/api/reset-database")
+async def api_reset_database():
+    """Delete all trades, heartbeat logs, and equity history. Resets P&L to zero."""
+    def _reset():
+        try:
+            with get_db() as session:
+                trades_deleted = session.query(Trade).delete()
+                logs_deleted = session.query(HeartbeatLog).delete()
+                equity_deleted = session.query(EquityHistory).delete()
+            return {
+                "success": True,
+                "message": f"Database reset: {trades_deleted} trades, {logs_deleted} logs, {equity_deleted} equity records deleted",
+                "trades_deleted": trades_deleted,
+                "logs_deleted": logs_deleted,
+                "equity_deleted": equity_deleted,
+            }
+        except Exception as e:
+            logger.exception("Database reset failed")
+            return {"success": False, "message": str(e)}
+
+    result = await asyncio.to_thread(_reset)
+    if not result["success"]:
+        return JSONResponse(result, status_code=500)
+    return result
+
+
 @router.post("/api/alerts/test")
 async def api_alerts_test():
     """Send a test alert to verify alert configuration."""

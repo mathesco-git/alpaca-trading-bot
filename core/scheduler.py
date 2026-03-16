@@ -22,7 +22,8 @@ from typing import Optional
 
 from core import alpaca_client
 from core.data_ingestion import (
-    get_daily_data, get_intraday_data, clear_cache, fetch_bars, compute_indicators
+    get_daily_data, get_intraday_data, clear_cache, fetch_bars, compute_indicators,
+    get_intraday_data_batch, get_daily_data_batch
 )
 from core.signals.day_trade import generate_signals_batch as day_signals_batch
 from core.signals.swing_trade import generate_signals_batch as swing_signals_batch
@@ -104,14 +105,16 @@ def _build_day_trade_universe():
         symbols = [a["symbol"] for a in assets]
         logger.info(f"Dynamic universe: {len(symbols)} tradeable assets from Alpaca")
 
-        # Cap symbols to fetch bars for (fetching 11K+ is too slow/unreliable)
-        MAX_BAR_CANDIDATES = 2000
-        if len(symbols) > MAX_BAR_CANDIDATES:
-            logger.info(f"Capping bar fetch from {len(symbols)} to {MAX_BAR_CANDIDATES} symbols")
-            symbols = symbols[:MAX_BAR_CANDIDATES]
-
-        # Fetch daily bars in bulk
-        bar_data = alpaca_client.get_multi_symbol_daily_bars(symbols, limit=20)
+        # Fetch daily bars in batches of 2000 to avoid slow/unreliable API calls
+        BAR_BATCH_SIZE = 2000
+        bar_data = {}
+        for batch_start in range(0, len(symbols), BAR_BATCH_SIZE):
+            batch = symbols[batch_start:batch_start + BAR_BATCH_SIZE]
+            batch_num = batch_start // BAR_BATCH_SIZE + 1
+            total_batches = (len(symbols) + BAR_BATCH_SIZE - 1) // BAR_BATCH_SIZE
+            logger.info(f"Fetching daily bars batch {batch_num}/{total_batches} ({len(batch)} symbols)")
+            batch_data = alpaca_client.get_multi_symbol_daily_bars(batch, limit=20)
+            bar_data.update(batch_data)
 
         # Filter by price and volume thresholds
         qualified = []
@@ -304,17 +307,11 @@ def day_trade_scan():
         _day_scan_cycle += 1
         clear_cache()
 
-        # Fetch intraday data for day trade watchlist
-        intraday_cache = {}
-        daily_cache = {}
-
-        for symbol in config.DAY_TRADE_WATCHLIST:
-            df = get_intraday_data(symbol, limit=100)
-            if df is not None:
-                intraday_cache[symbol] = df
-            ddf = get_daily_data(symbol, limit=60)
-            if ddf is not None:
-                daily_cache[symbol] = ddf
+        # Fetch intraday and daily data in batches for the full watchlist
+        watchlist = config.DAY_TRADE_WATCHLIST
+        logger.info(f"Fetching data for {len(watchlist)} symbols in batches...")
+        intraday_cache = get_intraday_data_batch(watchlist, limit=100, batch_size=100)
+        daily_cache = get_daily_data_batch(watchlist, limit=60, batch_size=100)
 
         # Generate signals
         signals = day_signals_batch(config.DAY_TRADE_WATCHLIST, intraday_cache, daily_cache)

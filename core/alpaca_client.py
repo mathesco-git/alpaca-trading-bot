@@ -545,6 +545,104 @@ def get_latest_price(symbol: str) -> Optional[float]:
     return None
 
 
+def get_multi_symbol_bars(symbols: List[str], timeframe: str = "5Min",
+                          limit: int = 100, batch_size: int = 100) -> Dict[str, pd.DataFrame]:
+    """
+    Fetch bar data for many symbols at once using multi-symbol requests.
+    Returns dict of symbol -> DataFrame with OHLCV columns.
+
+    Uses batches to avoid slow/unreliable API calls.
+    """
+    client = _get_data_client()
+    if not client:
+        return {}
+
+    tf_map = {
+        "1Min": TimeFrame.Minute,
+        "5Min": TimeFrame(5, TimeFrameUnit.Minute),
+        "1Hour": TimeFrame.Hour,
+        "1Day": TimeFrame.Day,
+    }
+    tf = tf_map.get(timeframe, TimeFrame(5, TimeFrameUnit.Minute))
+
+    # Calculate start date based on timeframe and limit
+    if timeframe == "1Day":
+        start = datetime.now() - timedelta(days=int(limit * 1.5) + 10)
+    elif timeframe == "1Hour":
+        start = datetime.now() - timedelta(hours=limit * 2)
+    else:
+        start = datetime.now() - timedelta(days=max(limit // 78 + 2, 7))
+
+    result = {}
+    total_batches = (len(symbols) + batch_size - 1) // batch_size
+    failed_batches = 0
+
+    for i in range(0, len(symbols), batch_size):
+        batch = symbols[i:i + batch_size]
+        batch_num = i // batch_size + 1
+        try:
+            request = StockBarsRequest(
+                symbol_or_symbols=batch,
+                timeframe=tf,
+                start=start,
+                limit=limit * len(batch),  # limit is per-request total, so scale by batch size
+            )
+            bars = _retry_on_rate_limit(client.get_stock_bars, request)
+            if not bars:
+                failed_batches += 1
+                continue
+
+            # Parse into per-symbol DataFrames
+            # Try .df first (returns MultiIndex DataFrame)
+            df = None
+            try:
+                if hasattr(bars, 'df') and not bars.df.empty:
+                    df = bars.df
+            except Exception:
+                pass
+
+            if df is not None and isinstance(df.index, pd.MultiIndex):
+                for sym in df.index.get_level_values(0).unique():
+                    sym_str = str(sym)
+                    sym_df = df.loc[sym].copy().reset_index()
+                    sym_df.columns = [c.lower() for c in sym_df.columns]
+                    if len(sym_df) >= 1:
+                        result[sym_str] = sym_df.tail(limit)
+            else:
+                # Fallback: try .data dict
+                bar_dict = getattr(bars, 'data', None) or {}
+                for sym, bar_list in bar_dict.items():
+                    sym_str = str(sym)
+                    if isinstance(bar_list, list) and len(bar_list) >= 1:
+                        records = []
+                        for b in bar_list:
+                            records.append({
+                                "timestamp": b.timestamp,
+                                "open": float(b.open),
+                                "high": float(b.high),
+                                "low": float(b.low),
+                                "close": float(b.close),
+                                "volume": float(b.volume),
+                                "vwap": float(b.vwap) if hasattr(b, 'vwap') and b.vwap else None,
+                            })
+                        sym_df = pd.DataFrame(records)
+                        result[sym_str] = sym_df.tail(limit)
+
+        except Exception as e:
+            failed_batches += 1
+            logger.warning(f"Multi-bar batch {batch_num}/{total_batches} failed: {e}")
+            continue
+
+        # Brief pause between batches for rate limiting
+        if i + batch_size < len(symbols):
+            import time as _time
+            _time.sleep(0.3)
+
+    logger.info(f"Multi-symbol bars ({timeframe}): got data for {len(result)}/{len(symbols)} symbols "
+                f"({failed_batches}/{total_batches} batches failed)")
+    return result
+
+
 def get_multi_symbol_daily_bars(symbols: List[str], limit: int = 20) -> Dict[str, Dict[str, float]]:
     """
     Fetch daily bars for many symbols at once using multi-symbol requests.
