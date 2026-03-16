@@ -18,11 +18,12 @@ Entry conditions (ALL must be true):
 
 import logging
 import math
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable
 
 import pandas as pd
 
 from core.data_ingestion import get_intraday_data, get_daily_data, get_sma_slope
+from db.database import log_heartbeat
 from config import (
     DAY_RSI_ENTRY_THRESHOLD, DAY_RSI_ENTRY_CEILING,
     DAY_VOLUME_MULTIPLIER, DAY_VOLUME_SPIKE_CAP,
@@ -34,6 +35,22 @@ from config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _log_signal_event(symbol: str, signal_type: str, reason: str,
+                      indicators: dict = None):
+    """Log a scanner signal event to the heartbeat with structured data."""
+    detail = {"symbol": symbol, "signal": signal_type, "reason": reason}
+    if indicators:
+        detail["indicators"] = indicators
+    event = "signal" if signal_type == "buy" else "rejection"
+    level = "info" if signal_type == "buy" else "info"
+    log_heartbeat(
+        f"[{symbol}] {signal_type.upper()}: {reason}",
+        level=level,
+        event_type=event,
+        detail=detail,
+    )
 
 
 def generate_signal(symbol: str, intraday_df: Optional[pd.DataFrame] = None,
@@ -176,6 +193,13 @@ def generate_signal(symbol: str, intraday_df: Optional[pd.DataFrame] = None,
 
     # ── BUY Signal: Quality filters (any failure = hold) ─────────────
 
+    # Helper: build indicator snapshot for rejection logging
+    def _rejection_indicators(**extra):
+        base = {"price": current_price, "vwap": vwap, "rsi": round(rsi, 1),
+                "volume": volume, "volume_avg": volume_avg}
+        base.update(extra)
+        return base
+
     # Filter 1: RSI ceiling — reject overbought exhaustion
     if rsi > DAY_RSI_ENTRY_CEILING:
         result["signal"] = "hold"
@@ -184,6 +208,8 @@ def generate_signal(symbol: str, intraday_df: Optional[pd.DataFrame] = None,
             f"Buying at extreme RSI typically means entering at the top of the move."
         )
         logger.info(f"[{symbol}] {result['reason']}")
+        _log_signal_event(symbol, "rejected", result["reason"],
+                          _rejection_indicators(filter="rsi_ceiling"))
         return result
 
     # Filter 2: Volume spike cap — reject blow-off tops
@@ -195,6 +221,8 @@ def generate_signal(symbol: str, intraday_df: Optional[pd.DataFrame] = None,
             f"{DAY_VOLUME_SPIKE_CAP}x (likely blow-off top, move already happened)."
         )
         logger.info(f"[{symbol}] {result['reason']}")
+        _log_signal_event(symbol, "rejected", result["reason"],
+                          _rejection_indicators(filter="volume_spike", volume_ratio=round(volume_ratio, 1)))
         return result
 
     # Filter 3: Minimum intraday ATR — skip dead/illiquid stocks
@@ -205,6 +233,8 @@ def generate_signal(symbol: str, intraday_df: Optional[pd.DataFrame] = None,
             f"${DAY_MIN_INTRADAY_ATR} (stock barely moves, too illiquid)."
         )
         logger.info(f"[{symbol}] {result['reason']}")
+        _log_signal_event(symbol, "rejected", result["reason"],
+                          _rejection_indicators(filter="min_atr", intraday_atr=round(intraday_atr, 4)))
         return result
 
     # Filter 4: Price deviation check — current price vs last daily close
@@ -219,6 +249,8 @@ def generate_signal(symbol: str, intraday_df: Optional[pd.DataFrame] = None,
                 f"Extreme gap/spike likely to revert."
             )
             logger.info(f"[{symbol}] {result['reason']}")
+            _log_signal_event(symbol, "rejected", result["reason"],
+                              _rejection_indicators(filter="price_deviation", deviation_pct=round(deviation * 100, 1)))
             return result
 
     # Filter 5: Breakout confirmation — previous bar must also be above VWAP
@@ -233,6 +265,8 @@ def generate_signal(symbol: str, intraday_df: Optional[pd.DataFrame] = None,
                 f"(need 2 consecutive bars above VWAP, not just the breakout bar)."
             )
             logger.info(f"[{symbol}] {result['reason']}")
+            _log_signal_event(symbol, "rejected", result["reason"],
+                              _rejection_indicators(filter="breakout_confirm"))
             return result
 
     # Filter 6: Daily trend — SMA50 slope
@@ -247,6 +281,8 @@ def generate_signal(symbol: str, intraday_df: Optional[pd.DataFrame] = None,
                 f"VWAP breakout + volume + RSI conditions met but daily trend is down."
             )
             logger.info(f"[{symbol}] {result['reason']}")
+            _log_signal_event(symbol, "rejected", result["reason"],
+                              _rejection_indicators(filter="trend_sma50", sma50_slope=round(slope, 4)))
             return result
 
     # Filter 7: Daily RSI floor — don't buy when daily timeframe is bearish
@@ -257,6 +293,8 @@ def generate_signal(symbol: str, intraday_df: Optional[pd.DataFrame] = None,
             f"(daily timeframe is bearish, intraday breakout is likely a trap)."
         )
         logger.info(f"[{symbol}] {result['reason']}")
+        _log_signal_event(symbol, "rejected", result["reason"],
+                          _rejection_indicators(filter="daily_rsi", daily_rsi=round(daily_rsi, 1)))
         return result
 
     # Filter 8: Price above SMA50 — confluence with daily trend
@@ -268,6 +306,8 @@ def generate_signal(symbol: str, intraday_df: Optional[pd.DataFrame] = None,
                 f"${daily_sma50:.2f}. Intraday breakout against daily resistance."
             )
             logger.info(f"[{symbol}] {result['reason']}")
+            _log_signal_event(symbol, "rejected", result["reason"],
+                              _rejection_indicators(filter="below_sma50", daily_sma50=daily_sma50))
             return result
 
     # ── All filters passed — GENERATE BUY SIGNAL ─────────────────────
@@ -279,12 +319,19 @@ def generate_signal(symbol: str, intraday_df: Optional[pd.DataFrame] = None,
         f"daily ATR ${daily_atr:.2f}, daily RSI {f'{daily_rsi:.1f}' if daily_rsi else 'N/A'}"
     )
     logger.info(f"[{symbol}] BUY signal: {result['reason']}")
+    _log_signal_event(symbol, "buy", result["reason"], {
+        "price": current_price, "vwap": vwap,
+        "volume": volume, "volume_ratio": round(volume_ratio, 1),
+        "rsi": round(rsi, 1), "daily_atr": round(daily_atr, 2),
+        "daily_rsi": round(daily_rsi, 1) if daily_rsi else None,
+    })
     return result
 
 
 def generate_signals_batch(symbols: list,
                            intraday_cache: Optional[Dict[str, pd.DataFrame]] = None,
-                           daily_cache: Optional[Dict[str, pd.DataFrame]] = None) -> list:
+                           daily_cache: Optional[Dict[str, pd.DataFrame]] = None,
+                           on_buy=None) -> list:
     """
     Generate day trade signals for a list of symbols.
 
@@ -292,6 +339,10 @@ def generate_signals_batch(symbols: list,
         symbols: List of stock tickers
         intraday_cache: Pre-fetched intraday DataFrames keyed by symbol
         daily_cache: Pre-fetched daily DataFrames keyed by symbol
+        on_buy: Optional callback fired immediately when a buy signal is
+                detected: ``on_buy(signal_dict) -> None``.  This allows the
+                scheduler to execute orders as soon as they are found instead
+                of waiting for the entire scan to finish.
 
     Returns:
         List of signal dicts
@@ -302,4 +353,13 @@ def generate_signals_batch(symbols: list,
         daily_df = daily_cache.get(symbol) if daily_cache else None
         sig = generate_signal(symbol, intraday_df=intraday_df, daily_df=daily_df)
         signals.append(sig)
+
+        # Fire the callback immediately so the order is placed while the
+        # scan continues processing remaining symbols.
+        if on_buy and sig["signal"] == "buy":
+            try:
+                on_buy(sig)
+            except Exception as e:
+                logger.error(f"[{symbol}] on_buy callback failed: {e}")
+
     return signals

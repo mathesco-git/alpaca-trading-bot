@@ -17,6 +17,8 @@ Exceptions are caught, logged, and retried once.
 import logging
 import traceback
 import time
+import threading
+import queue
 from datetime import datetime, date
 from typing import Optional
 
@@ -300,7 +302,7 @@ def day_trade_scan():
     if not _check_market_open():
         return
 
-    log_heartbeat("Day trade scan starting...", level="info")
+    log_heartbeat("Day trade scan starting...", level="info", event_type="scan")
 
     def _do_scan():
         global _day_scan_cycle
@@ -313,14 +315,8 @@ def day_trade_scan():
         intraday_cache = get_intraday_data_batch(watchlist, limit=100, batch_size=100)
         daily_cache = get_daily_data_batch(watchlist, limit=60, batch_size=100)
 
-        # Generate signals
-        signals = day_signals_batch(config.DAY_TRADE_WATCHLIST, intraday_cache, daily_cache)
-
-        # Apply sentiment filter (Phase 2)
-        if config.ENABLE_SENTIMENT:
-            signals = [adjust_signal_with_sentiment(s) for s in signals]
-
-        # Get account info for position sizing
+        # Get account info for position sizing (before signal generation so
+        # orders can be placed immediately when a buy signal is found)
         account = alpaca_client.get_account()
         if not account:
             log_heartbeat("Day scan: Could not get account info", level="error")
@@ -329,42 +325,109 @@ def day_trade_scan():
         equity = account["equity"]
         buying_power = account["buying_power"]
 
-        # Build market context for trade logging
+        # Market context is populated progressively during the scan.
+        # Final signal counts are filled in after the scan completes.
         market_context = {
             "scan_type": "day_trade",
             "scan_cycle": _day_scan_cycle,
             "watchlist_size": len(config.DAY_TRADE_WATCHLIST),
             "symbols_with_data": len(intraday_cache),
-            "total_signals_generated": len(signals),
-            "buy_signals_count": len([s for s in signals if s["signal"] == "buy"]),
-            "sell_signals_count": len([s for s in signals if s["signal"] == "sell"]),
-            "hold_signals_count": len([s for s in signals if s["signal"] == "hold"]),
             "scan_timestamp_utc": datetime.utcnow().isoformat(),
         }
 
-        # Execute buy signals
-        buys = [s for s in signals if s["signal"] == "buy"]
-        for signal in buys:
-            # Gather sentiment data for logging
-            sentiment_data = None
-            if config.ENABLE_SENTIMENT:
-                sentiment_data = get_sentiment(signal["symbol"])
+        # ── Background order queue ────────────────────────────────────
+        # Buy signals are enqueued instantly (non-blocking for the scan).
+        # A single worker thread processes them sequentially so that
+        # pre_trade_check() always sees the up-to-date position count
+        # and buying-power — no race conditions.
+        order_queue = queue.Queue()
+        executed_buys = []  # written only by the worker thread
 
-            trade_id = execute_entry(
-                signal["symbol"], "day", signal, equity, buying_power,
-                sentiment_data=sentiment_data,
-                market_context=market_context,
-            )
-            if trade_id:
-                alert_trade_entry(
-                    signal["symbol"], "day", signal.get("qty", 0),
-                    signal.get("entry_price", 0), signal.get("stop_loss", 0),
-                )
+        _SENTINEL = None  # signals the worker to shut down
+
+        def _order_worker():
+            """Drain the order queue, executing one entry at a time."""
+            while True:
+                signal = order_queue.get()
+                if signal is _SENTINEL:
+                    order_queue.task_done()
+                    break
+                try:
+                    # Apply sentiment filter per signal
+                    if config.ENABLE_SENTIMENT:
+                        signal = adjust_signal_with_sentiment(signal)
+                        if signal["signal"] != "buy":
+                            order_queue.task_done()
+                            continue
+
+                    sentiment_data = None
+                    if config.ENABLE_SENTIMENT:
+                        sentiment_data = get_sentiment(signal["symbol"])
+
+                    trade_id = execute_entry(
+                        signal["symbol"], "day", signal, equity, buying_power,
+                        sentiment_data=sentiment_data,
+                        market_context=market_context,
+                    )
+                    if trade_id:
+                        executed_buys.append(signal)
+                        alert_trade_entry(
+                            signal["symbol"], "day", signal.get("qty", 0),
+                            signal.get("entry_price", 0),
+                            signal.get("stop_loss", 0),
+                        )
+                except Exception as e:
+                    logger.error(
+                        f"[{signal.get('symbol', '?')}] Order worker error: {e}\n"
+                        f"{traceback.format_exc()}"
+                    )
+                finally:
+                    order_queue.task_done()
+
+        worker = threading.Thread(target=_order_worker, name="day-order-worker", daemon=True)
+        worker.start()
+
+        def _on_buy_signal(signal):
+            """Callback from signal generator — enqueue for immediate,
+            non-blocking order execution."""
+            order_queue.put(signal)
+
+        # ── Generate signals ──────────────────────────────────────────
+        # Buy orders are enqueued via the on_buy callback as each symbol
+        # is evaluated.  The scan itself is never blocked by order fills.
+        signals = day_signals_batch(
+            config.DAY_TRADE_WATCHLIST, intraday_cache, daily_cache,
+            on_buy=_on_buy_signal,
+        )
+
+        # Signal the worker to shut down after it finishes pending orders,
+        # then wait for it to complete so the summary is accurate.
+        order_queue.put(_SENTINEL)
+        order_queue.join()
+        worker.join(timeout=120)  # safety net — don't hang forever
+
+        # Update market context with final counts (useful for post-scan logging)
+        buys = [s for s in signals if s["signal"] == "buy"]
+        market_context.update({
+            "total_signals_generated": len(signals),
+            "buy_signals_count": len(buys),
+            "sell_signals_count": len([s for s in signals if s["signal"] == "sell"]),
+            "hold_signals_count": len([s for s in signals if s["signal"] == "hold"]),
+        })
 
         log_heartbeat(
             f"Day scan complete: {len(signals)} symbols scanned, "
-            f"{len(buys)} buy signals",
-            level="info"
+            f"{len(buys)} buy signals, {len(executed_buys)} orders placed",
+            level="info",
+            event_type="scan",
+            detail={
+                "scan_cycle": _day_scan_cycle,
+                "symbols_scanned": len(signals),
+                "buy_signals": len(buys),
+                "orders_placed": len(executed_buys),
+                "buy_symbols": [s["symbol"] for s in buys],
+                "executed_symbols": [s["symbol"] for s in executed_buys],
+            },
         )
 
     _run_with_retry("day_trade_scan", _do_scan)

@@ -9,7 +9,7 @@ Tables:
 
 from datetime import datetime, date
 from sqlalchemy import (
-    Column, Integer, String, Float, DateTime, Date,
+    Column, Integer, String, Float, DateTime, Date, Text,
     Index, create_engine
 )
 from sqlalchemy.orm import declarative_base
@@ -75,14 +75,26 @@ class HeartbeatLog(Base):
     timestamp = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
     message = Column(String, nullable=False)
     level = Column(String, nullable=False, default="info")  # info, warning, error
+    # Structured fields for scanner signals and order events
+    event_type = Column(String, nullable=True, index=True)  # signal, order, rejection, scan, health, ...
+    detail = Column(Text, nullable=True)  # JSON-encoded structured data
 
     def to_dict(self):
         """Convert log entry to dictionary for JSON serialization."""
+        import json
+        parsed_detail = None
+        if self.detail:
+            try:
+                parsed_detail = json.loads(self.detail)
+            except (json.JSONDecodeError, TypeError):
+                parsed_detail = self.detail
         return {
             "id": self.id,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
             "message": self.message,
             "level": self.level,
+            "event_type": self.event_type,
+            "detail": parsed_detail,
         }
 
 

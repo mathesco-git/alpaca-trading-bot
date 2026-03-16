@@ -252,12 +252,13 @@ async def api_trades(
 # ─────────────────────────────────────────────
 
 @router.get("/api/heartbeat")
-async def api_heartbeat():
-    """Get latest heartbeat log entries."""
+async def api_heartbeat(event_type: Optional[str] = Query(None)):
+    """Get latest heartbeat log entries, optionally filtered by event_type."""
     with get_db() as session:
-        entries = session.query(HeartbeatLog).order_by(
-            HeartbeatLog.timestamp.desc()
-        ).limit(config.HEARTBEAT_LOG_MAX_DISPLAY).all()
+        query = session.query(HeartbeatLog).order_by(HeartbeatLog.timestamp.desc())
+        if event_type:
+            query = query.filter(HeartbeatLog.event_type == event_type)
+        entries = query.limit(config.HEARTBEAT_LOG_MAX_DISPLAY).all()
         return [e.to_dict() for e in entries]
 
 

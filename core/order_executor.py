@@ -120,7 +120,12 @@ def execute_entry(symbol: str, strategy_type: str, signal: Dict[str, Any],
         symbol, strategy_type, shares, entry_price, portfolio_equity, buying_power
     )
     if not approved:
-        log_heartbeat(f"Order rejected for {symbol}: {reason}", level="warning")
+        log_heartbeat(
+            f"Order rejected for {symbol}: {reason}", level="warning",
+            event_type="rejection",
+            detail={"symbol": symbol, "strategy": strategy_type,
+                    "shares": shares, "price": entry_price, "reason": reason},
+        )
         log_rejected_trade(
             symbol, strategy_type, signal, reason,
             portfolio_equity, buying_power,
@@ -139,8 +144,12 @@ def execute_entry(symbol: str, strategy_type: str, signal: Dict[str, Any],
             f"({strategy_type}), SL=${stop_loss:.2f}, TP={take_profit}"
         )
         log_heartbeat(
-            f"MONITOR MODE — would buy {shares} {symbol} ({strategy_type})",
-            level="info"
+            f"MONITOR MODE — would buy {shares} {symbol} @ ~${entry_price:.2f} ({strategy_type})",
+            level="info",
+            event_type="order",
+            detail={"symbol": symbol, "strategy": strategy_type, "shares": shares,
+                    "price": entry_price, "stop_loss": stop_loss,
+                    "take_profit": take_profit, "status": "monitor_mode"},
         )
         return None
 
@@ -151,8 +160,11 @@ def execute_entry(symbol: str, strategy_type: str, signal: Dict[str, Any],
         return None
 
     log_heartbeat(
-        f"Order submitted for {symbol}: BUY {shares} shares — waiting for fill...",
-        level="info"
+        f"Order submitted for {symbol}: BUY {shares} shares @ ~${entry_price:.2f} — waiting for fill...",
+        level="info",
+        event_type="order",
+        detail={"symbol": symbol, "strategy": strategy_type, "shares": shares,
+                "price": entry_price, "order_id": order_id, "status": "submitted"},
     )
 
     # ── Step 2: Wait for fill confirmation ────────────────────────────
@@ -161,7 +173,10 @@ def execute_entry(symbol: str, strategy_type: str, signal: Dict[str, Any],
     if not fill_details:
         log_heartbeat(
             f"Order for {symbol} was NOT filled — trade will NOT be recorded.",
-            level="warning"
+            level="warning",
+            event_type="order",
+            detail={"symbol": symbol, "strategy": strategy_type,
+                    "order_id": order_id, "status": "not_filled"},
         )
         log_rejected_trade(
             symbol, strategy_type, signal,
@@ -203,7 +218,15 @@ def execute_entry(symbol: str, strategy_type: str, signal: Dict[str, Any],
     log_heartbeat(
         f"FILLED: BUY {actual_qty} {symbol} @ ${actual_fill_price:.2f} ({strategy_type}) "
         f"SL=${stop_loss:.2f} TP={take_profit} — Order: {order_id}",
-        level="info"
+        level="info",
+        event_type="order",
+        detail={"symbol": symbol, "strategy": strategy_type,
+                "shares": actual_qty, "fill_price": actual_fill_price,
+                "signal_price": entry_price,
+                "slippage": round(actual_fill_price - entry_price, 4),
+                "stop_loss": stop_loss, "take_profit": take_profit,
+                "order_id": order_id, "trade_id": trade_id,
+                "status": "filled"},
     )
 
     # Log full trade decision context to JSON
@@ -340,7 +363,12 @@ def execute_exit(trade_id: int, exit_price: float, reason: str = "signal",
     log_heartbeat(
         f"SELL {trade_quantity} {symbol} @ ~${exit_price:.2f} ({status}) "
         f"P&L: ${pnl:.2f} — {reason}",
-        level="info"
+        level="info",
+        event_type="order",
+        detail={"symbol": symbol, "strategy": trade_strategy, "side": "sell",
+                "shares": trade_quantity, "exit_price": exit_price,
+                "entry_price": trade_entry_price, "pnl": round(pnl, 2),
+                "status": status, "reason": reason},
     )
 
     # Log exit to trade decision log

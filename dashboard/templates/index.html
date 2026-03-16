@@ -30,6 +30,20 @@
         .log-info { border-left: 3px solid #6c7086; }
         .log-warning { border-left: 3px solid #f9e2af; }
         .log-error { border-left: 3px solid #f38ba8; }
+        .log-signal { border-left: 3px solid #a6e3a1; background: rgba(166,227,161,0.05); }
+        .log-rejection { border-left: 3px solid #fab387; background: rgba(250,179,135,0.04); }
+        .log-order { border-left: 3px solid #89b4fa; background: rgba(137,180,250,0.05); }
+        .log-tag { font-size: 0.6rem; padding: 1px 5px; border-radius: 4px; font-weight: 600; text-transform: uppercase; margin-right: 6px; }
+        .tag-signal { background: #a6e3a1; color: #11111b; }
+        .tag-rejection { background: #fab387; color: #11111b; }
+        .tag-order { background: #89b4fa; color: #11111b; }
+        .tag-scan { background: #cba6f7; color: #11111b; }
+        .tag-health { background: #6c7086; color: #cdd6f4; }
+        .log-detail { color: #a6adc8; margin-top: 2px; font-size: 0.65rem; }
+        .log-detail span { margin-right: 8px; }
+        .log-detail .val { color: #cdd6f4; font-weight: 500; }
+        .log-filter-btn { font-size: 0.65rem; padding: 2px 8px; border-radius: 9999px; border: 1px solid #45475a; cursor: pointer; transition: all 0.15s; }
+        .log-filter-btn:hover, .log-filter-btn.active { background: #45475a; color: #cdd6f4; }
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: #1e1e2e; }
         ::-webkit-scrollbar-thumb { background: #45475a; border-radius: 3px; }
@@ -388,10 +402,18 @@
     <div id="sentiment-empty" class="text-center text-gray-600 py-4 hidden">Sentiment analysis disabled or loading...</div>
 </section>
 
-<!-- Section 8: Heartbeat Log -->
+<!-- Section 8: Activity Log -->
 <section id="sec-log" class="card p-4 md:p-5">
-    <h2 class="text-sm font-semibold text-gray-400 mb-3 uppercase tracking-wide">Heartbeat Log</h2>
-    <div id="heartbeat-log" class="max-h-72 overflow-y-auto space-y-1 font-mono text-xs"></div>
+    <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wide">Activity Log</h2>
+        <div class="flex gap-1 flex-wrap">
+            <button onclick="setLogFilter(null)" class="log-filter-btn active" data-filter="all">All</button>
+            <button onclick="setLogFilter('signal')" class="log-filter-btn" data-filter="signal">Signals</button>
+            <button onclick="setLogFilter('rejection')" class="log-filter-btn" data-filter="rejection">Rejections</button>
+            <button onclick="setLogFilter('order')" class="log-filter-btn" data-filter="order">Orders</button>
+        </div>
+    </div>
+    <div id="heartbeat-log" class="max-h-96 overflow-y-auto space-y-1 font-mono text-xs"></div>
     <div id="heartbeat-empty" class="text-center text-gray-600 py-4 hidden">No log entries yet</div>
 </section>
 
@@ -1049,10 +1071,52 @@ function updatePnlChart(data) {
 
 function setChartRange(days) { chartRange = days; fetchCharts(); }
 
-// ─── Heartbeat ───
+// ─── Activity Log ───
+let _logFilter = null;
+
+function setLogFilter(filter) {
+    _logFilter = filter;
+    document.querySelectorAll('.log-filter-btn').forEach(b => {
+        b.classList.toggle('active', filter === null ? b.dataset.filter === 'all' : b.dataset.filter === filter);
+    });
+    fetchHeartbeat();
+}
+
+function _formatDetail(d) {
+    if (!d) return '';
+    const parts = [];
+    if (d.symbol) parts.push(`<span>Symbol: <span class="val">${d.symbol}</span></span>`);
+    if (d.price) parts.push(`<span>Price: <span class="val">$${Number(d.price).toFixed(2)}</span></span>`);
+    if (d.fill_price) parts.push(`<span>Fill: <span class="val">$${Number(d.fill_price).toFixed(2)}</span></span>`);
+    if (d.slippage !== undefined && d.slippage !== null) {
+        const slip = Number(d.slippage);
+        const color = slip > 0 ? '#f38ba8' : slip < 0 ? '#a6e3a1' : '#a6adc8';
+        parts.push(`<span>Slip: <span class="val" style="color:${color}">${slip >= 0 ? '+' : ''}${slip.toFixed(4)}</span></span>`);
+    }
+    if (d.shares) parts.push(`<span>Shares: <span class="val">${d.shares}</span></span>`);
+    if (d.stop_loss) parts.push(`<span>SL: <span class="val">$${Number(d.stop_loss).toFixed(2)}</span></span>`);
+    if (d.take_profit) parts.push(`<span>TP: <span class="val">$${Number(d.take_profit).toFixed(2)}</span></span>`);
+    if (d.pnl !== undefined && d.pnl !== null) {
+        const pnl = Number(d.pnl);
+        const color = pnl >= 0 ? '#a6e3a1' : '#f38ba8';
+        parts.push(`<span>P&L: <span class="val" style="color:${color}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</span></span>`);
+    }
+    if (d.indicators) {
+        const ind = d.indicators;
+        if (ind.rsi) parts.push(`<span>RSI: <span class="val">${ind.rsi}</span></span>`);
+        if (ind.volume_ratio) parts.push(`<span>Vol: <span class="val">${ind.volume_ratio}x</span></span>`);
+        if (ind.daily_atr) parts.push(`<span>ATR: <span class="val">$${ind.daily_atr}</span></span>`);
+        if (ind.filter) parts.push(`<span>Filter: <span class="val">${ind.filter}</span></span>`);
+    }
+    if (d.status) parts.push(`<span>Status: <span class="val">${d.status}</span></span>`);
+    if (d.reason && !d.indicators) parts.push(`<span>Reason: <span class="val">${d.reason.substring(0, 80)}</span></span>`);
+    return parts.length ? `<div class="log-detail">${parts.join('')}</div>` : '';
+}
+
 async function fetchHeartbeat() {
     try {
-        const r = await fetch('/api/heartbeat');
+        const url = _logFilter ? `/api/heartbeat?event_type=${_logFilter}` : '/api/heartbeat';
+        const r = await fetch(url);
         if (!r.ok) return;
         const data = await r.json();
         const log = document.getElementById('heartbeat-log');
@@ -1061,7 +1125,14 @@ async function fetchHeartbeat() {
         empty.classList.add('hidden');
         log.innerHTML = data.map(e => {
             const t = new Date(e.timestamp).toLocaleTimeString('en-US', {hour12: false});
-            return `<div class="log-${e.level} pl-2 py-1 text-gray-300">[${t}] ${e.message}</div>`;
+            const et = e.event_type || '';
+            // Pick the CSS class: event-specific if available, otherwise level-based
+            const rowClass = et === 'signal' ? 'log-signal' : et === 'rejection' ? 'log-rejection' : et === 'order' ? 'log-order' : `log-${e.level}`;
+            // Tag badge
+            const tagClass = et ? `tag-${et}` : (e.level === 'warning' || e.level === 'error' ? '' : 'tag-health');
+            const tag = et ? `<span class="log-tag ${tagClass}">${et}</span>` : '';
+            const detail = _formatDetail(e.detail);
+            return `<div class="${rowClass} pl-2 py-1 text-gray-300">[${t}] ${tag}${e.message}${detail}</div>`;
         }).join('');
     } catch(e) { console.error('Heartbeat fetch error:', e); }
 }
